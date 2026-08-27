@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CS Energy Business</title><style>:root{--b:#07111a;--p:#10202d;--l:#294055;--t:#f5f7fa;--m:#9aabba;--o:#f47a20}*{box-sizing:border-box}body{margin:0;background:var(--b);color:var(--t);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.app{max-width:1400px;margin:auto;padding:16px}.nav{display:flex;gap:8px;overflow:auto;margin-bottom:16px}.nav button,.btn{border:1px solid var(--l);background:#0b1722;color:white;border-radius:10px;padding:10px 12px}.btn.primary{background:var(--o);color:#1d120a;border-color:var(--o);font-weight:800}.view{display:none}.view.active{display:block}.top{display:flex;justify-content:space-between;align-items:center;gap:8px}.card{background:var(--p);border:1px solid var(--l);border-radius:14px;padding:14px;margin:12px 0}.muted{color:var(--m)}.good{color:#74e6aa}.bad{color:#ff8e98}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}input,select,textarea{background:#09141f;color:#fff;border:1px solid var(--l);border-radius:9px;padding:10px}input{min-width:160px}.search{flex:1}.table{overflow:auto;border:1px solid var(--l);border-radius:12px}table{border-collapse:collapse;width:100%;min-width:900px}th,td{padding:9px;border-bottom:1px solid var(--l);text-align:left;font-size:12px}th{color:var(--m)}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stat strong{display:block;font-size:26px}@media(max-width:700px){.stats{grid-template-columns:1fr 1fr}.top{align-items:flex-start}.app{padding:10px}}</style></head><body><div class="app"><div class="nav" id="nav"></div><section id="home" class="view active"><div class="top"><div><h1>CS Energy Business</h1><div class="muted">Permanent business app</div></div></div><div class="stats" id="stats"></div></section><section id="products" class="view"><div class="top"><div><h1>Products</h1><div class="muted">Internal supplier pricing</div></div><button class="btn primary" onclick="addProduct()">+ Product</button></div><div class="card"><div class="row"><button class="btn primary" onclick="syncSupplier('dsp')">↻ Sync DSP Solar</button><button class="btn" onclick="syncSupplier('krannich')">↻ Sync Krannich Solar</button></div><div id="syncStatus" class="muted" style="margin-top:10px">No sync running.</div></div><div class="row"><input id="q" class="search" placeholder="Search manufacturer, model or SKU" oninput="renderProducts()"><select id="sf" onchange="renderProducts()"><option value="">All suppliers</option><option>DSP Solar</option><option>Krannich Solar</option><option>Manual</option></select></div><div class="table"><table><thead><tr><th>Manufacturer</th><th>Model</th><th>Supplier</th><th>SKU</th><th>Cost ex IVA</th><th>Sell</th><th>Availability</th></tr></thead><tbody id="productRows"></tbody></table></div></section><section id="clients" class="view"><div class="top"><h1>Clients</h1><button class="btn primary" onclick="addClient()">+ Client</button></div><div class="table"><table><thead><tr><th>Name</th><th>Location</th><th>Phone</th><th>Email</th></tr></thead><tbody id="clientRows"></tbody></table></div></section><section id="quotes" class="view"><div class="top"><h1>Quotes</h1><button class="btn primary" onclick="addQuote()">+ Quote</button></div><div class="table"><table><thead><tr><th>Ref</th><th>Customer</th><th>Date</th><th>Total incl IVA</th></tr></thead><tbody id="quoteRows"></tbody></table></div></section><section id="settings" class="view"><h1>Settings</h1><div class="card"><b>Backup</b><p class="muted">Your data is stored in this browser under the existing CS Energy storage key.</p><button class="btn" onclick="backup()">Export JSON backup</button></div></section></div><script>const KEY='csEnergyServiceV2',fresh={customers:[],products:[],quotes:[],settings:{}};let data=(()=>{try{return {...fresh,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch{return {...fresh}}})();const eur=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR'}).format(Number(n||0)),esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])),save=()=>localStorage.setItem(KEY,JSON.stringify(data)),sell=p=>Number(p.sell||0)||Number(p.cost||0)*(1+Number(p.markup||35)/100),uid=p=>p+Math.random().toString(36).slice(2)+Date.now().toString(36);const views=[['home','Home'],['products','Products'],['clients','Clients'],['quotes','Quotes'],['settings','Settings']];nav.innerHTML=views.map(([id,n])=>`<button onclick="show('${id}')">${n}</button>`).join('');function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));render()}function render(){stats.innerHTML=[['Clients',data.customers.length],['Products',data.products.length],['Quotes',data.quotes.length]].map(x=>`<div class="card stat"><span class="muted">${x[0]}</span><strong>${x[1]}</strong></div>`).join('');renderProducts();clientRows.innerHTML=data.customers.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.location||'')}</td><td>${esc(c.phone||'')}</td><td>${esc(c.email||'')}</td></tr>`).join('')||'<tr><td colspan="4">No clients</td></tr>';quoteRows.innerHTML=data.quotes.map(x=>{let c=data.customers.find(y=>y.id===x.customerId)||{};return `<tr><td>${esc(x.ref||x.id)}</td><td>${esc(c.name||'')}</td><td>${esc(x.date||'')}</td><td>${eur(Number(x.net||0)*1.21)}</td></tr>`}).join('')||'<tr><td colspan="4">No quotes</td></tr>'}function renderProducts(){let s=(q?.value||'').toLowerCase(),f=sf?.value||'';productRows.innerHTML=data.products.filter(p=>(!f||p.supplier===f)&&`${p.manufacturer} ${p.model} ${p.sku}`.toLowerCase().includes(s)).map(p=>`<tr><td>${esc(p.manufacturer||'—')}</td><td>${esc(p.model||'—')}</td><td>${esc(p.supplier||'Manual')}</td><td>${esc(p.sku||'—')}</td><td>${eur(p.cost)}</td><td>${eur(sell(p))}</td><td>${esc(p.availability||'—')}</td></tr>`).join('')||'<tr><td colspan="7">No products</td></tr>'}function merge(rows){let a=0,u=0;for(const r of rows||[]){let p=data.products.find(x=>(r.sku&&x.supplier===r.supplier&&x.sku===r.sku)||(x.sourceUrl&&r.sourceUrl&&x.sourceUrl===r.sourceUrl));if(p){if(Number(r.cost)>0)p.cost=Number(r.cost);p.manufacturer=p.manufacturer||r.manufacturer||'';p.model=p.model||r.model||r.name||'';p.availability=r.availability||p.availability;p.sourceUrl=r.sourceUrl||p.sourceUrl;u++}else{data.products.push({id:uid('p_'),supplier:r.supplier||'Manual',manufacturer:r.manufacturer||'',model:r.model||r.name||'',sku:r.sku||'',cost:Number(r.cost||0),markup:35,sell:0,availability:r.availability||'',sourceUrl:r.sourceUrl||''});a++}}save();render();return{a,u}}async function syncSupplier(k){
+  if(k!=='dsp'){
+    syncStatus.textContent='Syncing Krannich…';
+    try{
+      let r=await fetch('/api/router?op=sync-krannich',{cache:'no-store'}),j=await r.json();
+      if(!r.ok||!j.ok)throw Error(j.error||r.status);
+      let m=merge(j.products);
+      syncStatus.innerHTML=`<span class="good">Krannich complete:</span> ${m.a} added, ${m.u} updated.`
+    }catch(e){syncStatus.innerHTML=`<span class="bad">${esc(e.message)}</span>`}
+    return
+  }
+
+  let page=1,totalPages=1,processed=0,added=0,updated=0;
+  try{
+    while(page<=totalPages){
+      let offset=0;
+      let pageDone=false;
+
+      while(!pageDone){
+        syncStatus.textContent=`DSP page ${page}/${totalPages} — ${processed} processed…`;
+
+        const r=await fetch(`/api/router?op=sync-dsp&page=${page}&offset=${offset}&limit=8&_=${Date.now()}`,{
+          cache:'no-store'
+        });
+        const j=await r.json();
+        if(!r.ok||!j.ok)throw Error(j.error||r.status);
+
+        totalPages=Math.max(totalPages,Number(j.totalPages||1));
+
+        const rows=Array.isArray(j.products)?j.products:[];
+        const m=merge(rows);
+        added+=m.a;
+        updated+=m.u;
+        processed+=rows.length;
+
+        syncStatus.innerHTML=`<span class="good">DSP page ${page}/${totalPages}</span> — ${processed} processed`;
+
+        const totalOnPage=Number(j.totalOnPage||0);
+        const next=Number(j.nextOffset);
+
+        if(j.done || !Number.isFinite(next) || next<=offset || next>=totalOnPage){
+          pageDone=true;
+        }else{
+          offset=next;
+          await new Promise(resolve=>setTimeout(resolve,150));
+        }
+      }
+
+      page++;
+      if(page<=totalPages) await new Promise(resolve=>setTimeout(resolve,200));
+    }
+
+    syncStatus.innerHTML=`<span class="good">DSP complete:</span> ${added} added, ${updated} updated, ${processed} processed.`;
+  }catch(e){
+    syncStatus.innerHTML=`<span class="bad">DSP stopped: ${esc(e.message)}</span><br><small>${processed} records already saved.</small>`;
+  }
+}
+function addProduct(){let model=prompt('Product model');if(!model)return;let cost=Number(prompt('Cost ex IVA','0')||0);data.products.push({id:uid('p_'),supplier:'Manual',manufacturer:'',model,cost,markup:35});save();render()}function addClient(){let name=prompt('Customer name');if(!name)return;data.customers.push({id:uid('c_'),name,location:prompt('Location','')||'',phone:prompt('Phone','')||'',email:prompt('Email','')||''});save();render()}function addQuote(){if(!data.customers.length)return alert('Add a client first');let c=data.customers[0],net=Number(prompt('Quote net value ex IVA','0')||0);data.quotes.push({id:uid('q_'),ref:'Q-'+String(data.quotes.length+1).padStart(4,'0'),customerId:c.id,date:new Date().toISOString().slice(0,10),net});save();render()}function backup(){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download='cs-energy-backup.json';a.click()}render();</script></body></html>
