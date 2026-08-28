@@ -56,7 +56,7 @@ const invoiceSchema = {
     invoice_date: { type: ['string', 'null'], description: 'ISO date YYYY-MM-DD when identifiable' },
     due_date: { type: ['string', 'null'], description: 'ISO date YYYY-MM-DD when identifiable' },
     currency: { type: ['string', 'null'], description: 'Usually EUR' },
-    subtotal_net: { type: ['number', 'null'] },
+    subtotal_net: { type: ['number', 'null'], description: 'PRICE before IVA. On CS Energy / Competa Solar historical invoices, an amount labelled Price is the total excluding IVA.' },
     iva_rate: { type: ['number', 'null'], description: 'Percentage, for example 21' },
     iva_amount: { type: ['number', 'null'] },
     total_gross: { type: ['number', 'null'] },
@@ -163,9 +163,12 @@ module.exports = async function handler(req, res) {
             role: 'system',
             content:
               'You extract data from customer invoices issued by CS Energy / Competa Solar. ' +
-              'Read the invoice exactly as printed. Extract the customer, invoice metadata, totals, IVA and every genuine billed line item. ' +
-              'Do not invent missing values. If a value is not present or cannot be determined reliably, return null. ' +
-              'Keep equipment model numbers and meaningful descriptions. Monetary values must be numbers only, without currency symbols. ' +
+              'Read the invoice exactly as printed. Extract the customer, invoice metadata, every genuine billed line item, and the invoice financial summary. ' +
+              'The financial summary is critical. On these CS Energy / Competa Solar historical invoices, the printed field labelled PRICE means the invoice price BEFORE IVA. Always map that printed PRICE amount to subtotal_net. Then separately read the printed IVA rate, IVA amount, and final TOTAL including IVA. Never treat the printed PRICE as an IVA-inclusive total. ' +
+              'The relationship is PRICE ex IVA + IVA amount = TOTAL incl IVA. If all three are printed, copy them exactly rather than recalculating from line items. If PRICE is printed but one summary value is missing, only derive it when the arithmetic is unambiguous. ' +
+              'Do not set subtotal_net, iva_amount or total_gross to null merely because line item pricing is incomplete. If those amounts are visibly printed in the invoice summary, capture them exactly. ' +
+              'For each genuine billed line, capture quantity, unit price and line total whenever they are printed. Do not invent missing values. If a value is not present or cannot be determined reliably, return null. ' +
+              'Keep equipment model numbers and meaningful descriptions. Monetary values must be numbers only, without currency symbols or thousands separators. ' +
               'Dates must be YYYY-MM-DD when identifiable. Do not treat subtotals, IVA, deposits, balances or totals as product line items unless they are genuinely billed line items.'
           },
           {
@@ -179,7 +182,7 @@ module.exports = async function handler(req, res) {
               {
                 type: 'input_text',
                 text:
-                  'Extract this customer invoice into the required schema. Pay particular attention to quantities, unit prices, line totals, invoice number, customer identity, subtotal, IVA and final total.'
+                  'Extract this customer invoice into the required schema. Read the totals box/summary separately from the line items. IMPORTANT: on these invoices, PRICE is the amount excluding IVA and must be returned as subtotal_net. IVA is returned separately as iva_amount, and TOTAL is the amount including IVA. Pay particular attention to quantities, unit prices, line totals, invoice number, customer identity, PRICE ex IVA, IVA percentage, IVA amount and TOTAL incl IVA.'
               }
             ]
           }
