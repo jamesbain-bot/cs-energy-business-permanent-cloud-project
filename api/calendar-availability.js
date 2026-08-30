@@ -148,7 +148,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({
       configured: true,
       busyDates: [],
-      error: 'Calendar availability could not be loaded'
+      error: error.message
     });
   }
 };
