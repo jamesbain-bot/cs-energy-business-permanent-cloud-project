@@ -87,6 +87,7 @@ module.exports = async function handler(req, res) {
     }
 
     const clientEmail = credentials.client_email;
+    console.log('Google service account:', clientEmail);
     const privateKey = credentials.private_key;
 
     if (!clientEmail || !privateKey) {
