@@ -332,7 +332,6 @@ async function fulfil(session){
     await updateCarePlanState({...r,stripe_subscription_id:subscriptionId,stripe_customer_id:stripeCustomerId},'Active');
   }
 }
-}
 
 export default async function handler(req,res){
   if(req.method!=='POST')return res.status(405).json({error:'Method not allowed'});
