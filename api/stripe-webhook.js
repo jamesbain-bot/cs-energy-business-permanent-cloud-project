@@ -5,6 +5,8 @@ export const config={api:{bodyParser:false}};
 const SUPABASE_URL='https://xhbftdpbowqpfnvsvybt.supabase.co';
 const GOOGLE_SUBJECT='james.bain@competasolar.es';
 const GOOGLE_EVENT_SCOPE='https://www.googleapis.com/auth/calendar.events';
+const CARE_PLAN_FROM='CS Energy <info@competasolar.es>';
+const CARE_PLAN_ALERT_EMAIL=process.env.CARE_PLAN_ALERT_EMAIL||'info@competasolar.es';
 
 async function rawBody(req){
   if(Buffer.isBuffer(req.body)) return req.body;
@@ -116,6 +118,166 @@ async function addGoogleCalendarEvent(row){
   if(!r.ok)throw new Error(`Google Calendar event create failed (${r.status}): ${txt.slice(0,300)}`);
 }
 
+async function sendEmail(to,subject,html,text){
+  const key=process.env.RESEND_API_KEY;
+  if(!key){
+    console.error('RESEND_API_KEY missing');
+    return;
+  }
+  if(!to)return;
+  const r=await fetch('https://api.resend.com/emails',{
+    method:'POST',
+    headers:{
+      authorization:`Bearer ${key}`,
+      'content-type':'application/json'
+    },
+    body:JSON.stringify({from:CARE_PLAN_FROM,to:[to],subject,html,text})
+  });
+  const body=await r.text();
+  if(!r.ok)throw new Error(`Resend ${r.status}: ${body.slice(0,300)}`);
+}
+
+function carePlanDisplay(plan,status){
+  if(status==='Active')return plan;
+  if(status==='Payment Failed')return `${plan} - Payment Failed`;
+  if(status==='Cancelled')return `${plan} - Cancelled`;
+  return plan;
+}
+
+async function updateCarePlanState(r,status){
+  const now=new Date().toISOString();
+  const planStatus=status==='Active'?'active':status==='Payment Failed'?'payment_failed':'cancelled';
+  const displayPlan=carePlanDisplay(r.requested_plan,status);
+
+  await sb(
+    `customer_care_plan_requests?id=eq.${encodeURIComponent(r.id)}`,
+    'PATCH',
+    {status,updated_at:now}
+  );
+
+  await sb(
+    `customer_portal_access?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}`,
+    'PATCH',
+    {plan:r.requested_plan,plan_status:planStatus,updated_at:now}
+  );
+
+  const stateRows=await sb(
+    `cs_energy_app_state?user_id=eq.${encodeURIComponent(r.owner_user_id)}&select=user_id,data`
+  );
+  const stateRow=stateRows?.[0];
+  if(stateRow?.data){
+    const state=stateRow.data;
+    const customers=Array.isArray(state.customers)?state.customers:[];
+    const idx=customers.findIndex(c=>String(c?.id)===String(r.customer_id));
+    if(idx>=0){
+      customers[idx]={...customers[idx],plan:displayPlan,carePlanStatus:status};
+      state.customers=customers;
+      await sb(
+        `cs_energy_app_state?user_id=eq.${encodeURIComponent(r.owner_user_id)}`,
+        'PATCH',
+        {data:state,updated_at:now}
+      );
+    }
+  }
+
+  const snapshotRows=await sb(
+    `customer_portal_snapshots?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}&select=payload`
+  );
+  const snapshotRow=snapshotRows?.[0];
+  if(snapshotRow?.payload){
+    const payload=snapshotRow.payload;
+    payload.customer={...(payload.customer||{}),plan:displayPlan,carePlanStatus:status};
+    await sb(
+      `customer_portal_snapshots?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}`,
+      'PATCH',
+      {payload,updated_at:now}
+    );
+  }
+}
+
+async function carePlanBySubscription(subscriptionId){
+  if(!subscriptionId)return null;
+  const rows=await sb(
+    `customer_care_plan_requests?stripe_subscription_id=eq.${encodeURIComponent(subscriptionId)}&select=id,owner_user_id,customer_id,customer_email,requested_plan,status,stripe_subscription_id,stripe_customer_id&order=created_at.desc&limit=1`
+  );
+  return rows?.[0]||null;
+}
+
+async function handleInvoicePaid(invoice){
+  const subscriptionId=typeof invoice.subscription==='string'?invoice.subscription:invoice.subscription?.id;
+  const r=await carePlanBySubscription(subscriptionId);
+  if(!r)return;
+  const wasFailed=r.status==='Payment Failed';
+  await updateCarePlanState(r,'Active');
+  if(wasFailed){
+    await sendEmail(
+      r.customer_email,
+      'Your CS Energy Care Plan payment has been received',
+      `<p>Hello,</p><p>We've now received your care-plan payment and your <strong>${r.requested_plan} Care</strong> plan is active again.</p><p>Thank you,<br>CS Energy</p>`,
+      `We've now received your care-plan payment and your ${r.requested_plan} Care plan is active again. Thank you, CS Energy.`
+    );
+  }
+}
+
+async function handleInvoiceFailed(invoice){
+  const subscriptionId=typeof invoice.subscription==='string'?invoice.subscription:invoice.subscription?.id;
+  const r=await carePlanBySubscription(subscriptionId);
+  if(!r)return;
+  const alreadyFailed=r.status==='Payment Failed';
+  await updateCarePlanState(r,'Payment Failed');
+  if(!alreadyFailed){
+    await sendEmail(
+      r.customer_email,
+      'Action needed: CS Energy Care Plan payment failed',
+      `<p>Hello,</p><p>Stripe was unable to collect your monthly <strong>${r.requested_plan} Care</strong> payment.</p><p>Your care-plan benefits are temporarily suspended while the payment is outstanding. Stripe may retry the payment automatically. If your card details have changed, please contact us at <a href="mailto:info@competasolar.es">info@competasolar.es</a>.</p><p>Thank you,<br>CS Energy</p>`,
+      `Stripe was unable to collect your monthly ${r.requested_plan} Care payment. Your care-plan benefits are temporarily suspended while the payment is outstanding. Stripe may retry automatically. If your card details have changed, contact info@competasolar.es.`
+    );
+    await sendEmail(
+      CARE_PLAN_ALERT_EMAIL,
+      `Care Plan payment failed - ${r.customer_email||r.customer_id}`,
+      `<p>A monthly <strong>${r.requested_plan} Care</strong> payment failed.</p><p>Customer: ${r.customer_email||r.customer_id}</p><p>The customer record has been marked Payment Failed.</p>`,
+      `A monthly ${r.requested_plan} Care payment failed for ${r.customer_email||r.customer_id}. The customer record has been marked Payment Failed.`
+    );
+  }
+}
+
+async function handleSubscription(subscription){
+  const r=await carePlanBySubscription(subscription?.id);
+  if(!r)return;
+  if(subscription.status==='active' || subscription.status==='trialing'){
+    if(r.status!=='Active')await updateCarePlanState(r,'Active');
+    return;
+  }
+  if(['past_due','unpaid','incomplete_expired'].includes(subscription.status)){
+    await handleInvoiceFailed({subscription:subscription.id});
+    return;
+  }
+  if(subscription.status==='canceled'){
+    await handleSubscriptionDeleted(subscription);
+  }
+}
+
+async function handleSubscriptionDeleted(subscription){
+  const r=await carePlanBySubscription(subscription?.id);
+  if(!r)return;
+  const alreadyCancelled=r.status==='Cancelled';
+  await updateCarePlanState(r,'Cancelled');
+  if(!alreadyCancelled){
+    await sendEmail(
+      r.customer_email,
+      'Your CS Energy Care Plan has been cancelled',
+      `<p>Hello,</p><p>Your <strong>${r.requested_plan} Care</strong> subscription has been cancelled and the care-plan benefits are no longer active.</p><p>If you believe this is a mistake, please contact us at <a href="mailto:info@competasolar.es">info@competasolar.es</a>.</p><p>Thank you,<br>CS Energy</p>`,
+      `Your ${r.requested_plan} Care subscription has been cancelled and the care-plan benefits are no longer active. If this is a mistake, contact info@competasolar.es.`
+    );
+    await sendEmail(
+      CARE_PLAN_ALERT_EMAIL,
+      `Care Plan cancelled - ${r.customer_email||r.customer_id}`,
+      `<p>A <strong>${r.requested_plan} Care</strong> subscription was cancelled.</p><p>Customer: ${r.customer_email||r.customer_id}</p><p>The customer record has been marked Cancelled.</p>`,
+      `A ${r.requested_plan} Care subscription was cancelled for ${r.customer_email||r.customer_id}. The customer record has been marked Cancelled.`
+    );
+  }
+}
+
 async function fulfil(session){
   if(session.payment_status!=='paid')return;
 
@@ -149,59 +311,27 @@ async function fulfil(session){
   if(ref.startsWith('care_')){
     const id=ref.slice(5);
     const rows=await sb(
-      `customer_care_plan_requests?id=eq.${encodeURIComponent(id)}&select=owner_user_id,customer_id,requested_plan,status`
+      `customer_care_plan_requests?id=eq.${encodeURIComponent(id)}&select=id,owner_user_id,customer_id,customer_email,requested_plan,status,stripe_subscription_id,stripe_customer_id`
     );
     const r=rows?.[0];
     if(!r)return;
 
-    await sb(
-      `customer_care_plan_requests?id=eq.${encodeURIComponent(id)}&status=eq.Payment%20pending`,
-      'PATCH',
-      {status:'Active'}
-    );
+    const subscriptionId=typeof session.subscription==='string'?session.subscription:session.subscription?.id;
+    const stripeCustomerId=typeof session.customer==='string'?session.customer:session.customer?.id;
 
     await sb(
-      `customer_portal_access?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}`,
+      `customer_care_plan_requests?id=eq.${encodeURIComponent(id)}`,
       'PATCH',
-      {plan:r.requested_plan,plan_status:'active',updated_at:new Date().toISOString()}
-    );
-
-    // Keep the staff/customer master record in sync with the paid care plan.
-    // The business app stores all customer records inside cs_energy_app_state.data.
-    const stateRows=await sb(
-      `cs_energy_app_state?user_id=eq.${encodeURIComponent(r.owner_user_id)}&select=user_id,data`
-    );
-    const stateRow=stateRows?.[0];
-    if(stateRow?.data){
-      const state=stateRow.data;
-      const customers=Array.isArray(state.customers)?state.customers:[];
-      const idx=customers.findIndex(c=>String(c?.id)===String(r.customer_id));
-      if(idx>=0){
-        customers[idx]={...customers[idx],plan:r.requested_plan};
-        state.customers=customers;
-        await sb(
-          `cs_energy_app_state?user_id=eq.${encodeURIComponent(r.owner_user_id)}`,
-          'PATCH',
-          {data:state,updated_at:new Date().toISOString()}
-        );
+      {
+        stripe_subscription_id:subscriptionId||r.stripe_subscription_id||null,
+        stripe_customer_id:stripeCustomerId||r.stripe_customer_id||null,
+        updated_at:new Date().toISOString()
       }
-    }
-
-    // Also update the portal snapshot so both customer and staff views agree immediately.
-    const snapshotRows=await sb(
-      `customer_portal_snapshots?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}&select=payload`
     );
-    const snapshotRow=snapshotRows?.[0];
-    if(snapshotRow?.payload){
-      const payload=snapshotRow.payload;
-      payload.customer={...(payload.customer||{}),plan:r.requested_plan};
-      await sb(
-        `customer_portal_snapshots?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}`,
-        'PATCH',
-        {payload,updated_at:new Date().toISOString()}
-      );
-    }
+
+    await updateCarePlanState({...r,stripe_subscription_id:subscriptionId,stripe_customer_id:stripeCustomerId},'Active');
   }
+}
 }
 
 export default async function handler(req,res){
@@ -215,9 +345,11 @@ export default async function handler(req,res){
     }
 
     const event=JSON.parse(raw.toString('utf8'));
-    if(event.type==='checkout.session.completed'){
-      await fulfil(event.data.object);
-    }
+    if(event.type==='checkout.session.completed')await fulfil(event.data.object);
+    else if(event.type==='invoice.paid')await handleInvoicePaid(event.data.object);
+    else if(event.type==='invoice.payment_failed')await handleInvoiceFailed(event.data.object);
+    else if(event.type==='customer.subscription.updated')await handleSubscription(event.data.object);
+    else if(event.type==='customer.subscription.deleted')await handleSubscriptionDeleted(event.data.object);
 
     return res.status(200).json({received:true});
   }catch(e){
