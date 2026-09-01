@@ -203,12 +203,41 @@ async function carePlanBySubscription(subscriptionId){
   return rows?.[0]||null;
 }
 
-async function handleInvoicePaid(invoice){
+
+async function logCarePlanHistory(r,{eventType,eventStatus,amount=null,currency=null,invoiceId=null,eventId=null,eventAt=null,details={}}={}){
+  if(!r)return;
+  const row={
+    customer_id:r.customer_id,
+    care_plan_request_id:r.id,
+    customer_email:r.customer_email||null,
+    requested_plan:r.requested_plan||null,
+    event_type:eventType||'subscription_event',
+    event_status:eventStatus||null,
+    amount:amount==null?null:Number(amount),
+    currency:currency?String(currency).toUpperCase():null,
+    stripe_subscription_id:r.stripe_subscription_id||null,
+    stripe_customer_id:r.stripe_customer_id||null,
+    stripe_invoice_id:invoiceId||null,
+    stripe_event_id:eventId||null,
+    event_at:eventAt||new Date().toISOString(),
+    details:details||{}
+  };
+  try{
+    await sb('customer_care_plan_payment_history','POST',row);
+  }catch(e){
+    // A unique Stripe event ID may already exist if Stripe retries a webhook.
+    if(!String(e?.message||'').includes('23505'))console.error('care-plan history:',e);
+  }
+}
+
+async function handleInvoicePaid(invoice,event){
   const subscriptionId=typeof invoice.subscription==='string'?invoice.subscription:invoice.subscription?.id;
   const r=await carePlanBySubscription(subscriptionId);
   if(!r)return;
+  if(r.status==='Cancelled')return;
   const wasFailed=r.status==='Payment Failed';
   await updateCarePlanState(r,'Active');
+  await logCarePlanHistory(r,{eventType:wasFailed?'payment_recovered':'payment_succeeded',eventStatus:'Active',amount:invoice.amount_paid==null?null:Number(invoice.amount_paid)/100,currency:invoice.currency,invoiceId:invoice.id,eventId:event?.id,eventAt:event?.created?new Date(event.created*1000).toISOString():null,details:{billing_reason:invoice.billing_reason||null}});
   if(wasFailed){
     await sendEmail(
       r.customer_email,
@@ -219,12 +248,14 @@ async function handleInvoicePaid(invoice){
   }
 }
 
-async function handleInvoiceFailed(invoice){
+async function handleInvoiceFailed(invoice,event){
   const subscriptionId=typeof invoice.subscription==='string'?invoice.subscription:invoice.subscription?.id;
   const r=await carePlanBySubscription(subscriptionId);
   if(!r)return;
+  if(r.status==='Cancelled')return;
   const alreadyFailed=r.status==='Payment Failed';
   await updateCarePlanState(r,'Payment Failed');
+  await logCarePlanHistory(r,{eventType:'payment_failed',eventStatus:'Payment Failed',amount:invoice.amount_due==null?null:Number(invoice.amount_due)/100,currency:invoice.currency,invoiceId:invoice.id,eventId:event?.id,eventAt:event?.created?new Date(event.created*1000).toISOString():null,details:{attempt_count:invoice.attempt_count||null}});
   if(!alreadyFailed){
     await sendEmail(
       r.customer_email,
@@ -241,7 +272,7 @@ async function handleInvoiceFailed(invoice){
   }
 }
 
-async function handleSubscription(subscription){
+async function handleSubscription(subscription,event){
   const r=await carePlanBySubscription(subscription?.id);
   if(!r)return;
   if(subscription.status==='active' || subscription.status==='trialing'){
@@ -249,19 +280,20 @@ async function handleSubscription(subscription){
     return;
   }
   if(['past_due','unpaid','incomplete_expired'].includes(subscription.status)){
-    await handleInvoiceFailed({subscription:subscription.id});
+    await handleInvoiceFailed({subscription:subscription.id},event);
     return;
   }
   if(subscription.status==='canceled'){
-    await handleSubscriptionDeleted(subscription);
+    await handleSubscriptionDeleted(subscription,event);
   }
 }
 
-async function handleSubscriptionDeleted(subscription){
+async function handleSubscriptionDeleted(subscription,event){
   const r=await carePlanBySubscription(subscription?.id);
   if(!r)return;
   const alreadyCancelled=r.status==='Cancelled';
   await updateCarePlanState(r,'Cancelled');
+  await logCarePlanHistory(r,{eventType:'subscription_cancelled',eventStatus:'Cancelled',eventId:event?.id,eventAt:event?.created?new Date(event.created*1000).toISOString():null,details:{stripe_status:subscription.status||'canceled'}});
   if(!alreadyCancelled){
     await sendEmail(
       r.customer_email,
@@ -278,7 +310,7 @@ async function handleSubscriptionDeleted(subscription){
   }
 }
 
-async function fulfil(session){
+async function fulfil(session,event){
   if(session.payment_status!=='paid')return;
 
   const ref=String(session.client_reference_id||'');
@@ -329,7 +361,9 @@ async function fulfil(session){
       }
     );
 
-    await updateCarePlanState({...r,stripe_subscription_id:subscriptionId,stripe_customer_id:stripeCustomerId},'Active');
+    const linked={...r,stripe_subscription_id:subscriptionId||r.stripe_subscription_id,stripe_customer_id:stripeCustomerId||r.stripe_customer_id};
+    await updateCarePlanState(linked,'Active');
+    await logCarePlanHistory(linked,{eventType:'subscription_activated',eventStatus:'Active',amount:session.amount_total==null?null:Number(session.amount_total)/100,currency:session.currency,eventId:event?.id,eventAt:event?.created?new Date(event.created*1000).toISOString():null,details:{checkout_session_id:session.id||null}});
   }
 }
 
@@ -344,11 +378,11 @@ export default async function handler(req,res){
     }
 
     const event=JSON.parse(raw.toString('utf8'));
-    if(event.type==='checkout.session.completed')await fulfil(event.data.object);
-    else if(event.type==='invoice.paid')await handleInvoicePaid(event.data.object);
-    else if(event.type==='invoice.payment_failed')await handleInvoiceFailed(event.data.object);
-    else if(event.type==='customer.subscription.updated')await handleSubscription(event.data.object);
-    else if(event.type==='customer.subscription.deleted')await handleSubscriptionDeleted(event.data.object);
+    if(event.type==='checkout.session.completed')await fulfil(event.data.object,event);
+    else if(event.type==='invoice.paid')await handleInvoicePaid(event.data.object,event);
+    else if(event.type==='invoice.payment_failed')await handleInvoiceFailed(event.data.object,event);
+    else if(event.type==='customer.subscription.updated')await handleSubscription(event.data.object,event);
+    else if(event.type==='customer.subscription.deleted')await handleSubscriptionDeleted(event.data.object,event);
 
     return res.status(200).json({received:true});
   }catch(e){
