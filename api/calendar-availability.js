@@ -5,13 +5,13 @@ function b64url(input) {
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
-async function getAccessToken(clientEmail, privateKey, delegatedUser) {
+async function getAccessToken(clientEmail, privateKey) {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claim = b64url(JSON.stringify({
     iss: clientEmail,
-    sub: delegatedUser,
-    scope: 'https://www.googleapis.com/auth/calendar.readonly',
+    sub: 'james.bain@competasolar.es',
+    scope: 'https://www.googleapis.com/auth/calendar.events',
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
     exp: now + 3600
@@ -67,8 +67,7 @@ function addLocalDateRange(set, startIso, endIso) {
 module.exports = async function handler(req, res) {
   try {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-    const calendarId = (process.env.GOOGLE_CALENDAR_ID || '').trim();
-    const delegatedUser = (process.env.GOOGLE_WORKSPACE_USER || 'james.bain@competasolar.es').trim();
+    const calendarId = process.env.GOOGLE_CALENDAR_ID;
 
     if (!raw || !calendarId) {
       return res.status(200).json({
@@ -102,7 +101,7 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid date range' });
     }
 
-    const token = await getAccessToken(clientEmail, privateKey, delegatedUser);
+    const token = await getAccessToken(clientEmail, privateKey);
 
     // A UTC envelope safely covers the requested Madrid local dates.
     const timeMin = `${from}T00:00:00Z`;
