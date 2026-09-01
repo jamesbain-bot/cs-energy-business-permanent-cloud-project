@@ -1,5 +1,8 @@
 const crypto = require('crypto');
 
+const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+const GOOGLE_SUBJECT = 'james.bain@competasolar.es';
+
 function b64url(input) {
   return Buffer.from(input).toString('base64')
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -10,8 +13,8 @@ async function getAccessToken(clientEmail, privateKey) {
   const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claim = b64url(JSON.stringify({
     iss: clientEmail,
-    sub: 'james.bain@competasolar.es',
-    scope: 'https://www.googleapis.com/auth/calendar.events',
+    sub: GOOGLE_SUBJECT,
+    scope: GOOGLE_SCOPE,
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
     exp: now + 3600
@@ -33,11 +36,12 @@ async function getAccessToken(clientEmail, privateKey) {
     })
   });
 
+  const tokenText = await tokenResponse.text();
   if (!tokenResponse.ok) {
-    throw new Error(`Google token request failed (${tokenResponse.status})`);
+    throw new Error(`Google token request failed (${tokenResponse.status}): ${tokenText.slice(0,300)}`);
   }
 
-  return (await tokenResponse.json()).access_token;
+  return JSON.parse(tokenText).access_token;
 }
 
 function localDateMadrid(iso) {
@@ -51,15 +55,12 @@ function localDateMadrid(iso) {
 
 function addLocalDateRange(set, startIso, endIso) {
   const startDate = localDateMadrid(startIso);
-  // Subtract 1 ms so an event ending exactly at midnight does not block the next day.
   const endDate = localDateMadrid(new Date(new Date(endIso).getTime() - 1).toISOString());
-
   const current = new Date(`${startDate}T12:00:00Z`);
   const finish = new Date(`${endDate}T12:00:00Z`);
 
   while (current <= finish) {
-    const ds = current.toISOString().slice(0, 10);
-    set.add(ds);
+    set.add(current.toISOString().slice(0, 10));
     current.setUTCDate(current.getUTCDate() + 1);
   }
 }
@@ -80,30 +81,19 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    let credentials;
-    try {
-      credentials = JSON.parse(raw);
-    } catch {
-      throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON');
-    }
-
-    const clientEmail = credentials.client_email;
-    const privateKey = credentials.private_key;
-
-    if (!clientEmail || !privateKey) {
+    const credentials = JSON.parse(raw);
+    if (!credentials.client_email || !credentials.private_key) {
       throw new Error('Google service-account JSON is missing client_email or private_key');
     }
 
     const from = String(req.query.from || '');
     const to = String(req.query.to || '');
-
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       return res.status(400).json({ error: 'Invalid date range' });
     }
 
-    const token = await getAccessToken(clientEmail, privateKey);
+    const token = await getAccessToken(credentials.client_email, credentials.private_key);
 
-    // A UTC envelope safely covers the requested Madrid local dates.
     const timeMin = `${from}T00:00:00Z`;
     const toPlusOne = new Date(`${to}T12:00:00Z`);
     toPlusOne.setUTCDate(toPlusOne.getUTCDate() + 1);
@@ -123,14 +113,13 @@ module.exports = async function handler(req, res) {
       })
     });
 
+    const googleText = await googleResponse.text();
     if (!googleResponse.ok) {
-      const body = await googleResponse.text();
-      throw new Error(`Google Calendar request failed (${googleResponse.status}): ${body.slice(0, 300)}`);
+      throw new Error(`Google Calendar request failed (${googleResponse.status}): ${googleText.slice(0,300)}`);
     }
 
-    const body = await googleResponse.json();
+    const body = JSON.parse(googleText);
     const calendarResult = body.calendars?.[calendarId];
-
     if (calendarResult?.errors?.length) {
       throw new Error(`Google Calendar access error: ${JSON.stringify(calendarResult.errors)}`);
     }
