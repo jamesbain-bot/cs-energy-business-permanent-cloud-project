@@ -163,8 +163,44 @@ async function fulfil(session){
     await sb(
       `customer_portal_access?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}`,
       'PATCH',
-      {plan:r.requested_plan,plan_status:'active'}
+      {plan:r.requested_plan,plan_status:'active',updated_at:new Date().toISOString()}
     );
+
+    // Keep the staff/customer master record in sync with the paid care plan.
+    // The business app stores all customer records inside cs_energy_app_state.data.
+    const stateRows=await sb(
+      `cs_energy_app_state?user_id=eq.${encodeURIComponent(r.owner_user_id)}&select=user_id,data`
+    );
+    const stateRow=stateRows?.[0];
+    if(stateRow?.data){
+      const state=stateRow.data;
+      const customers=Array.isArray(state.customers)?state.customers:[];
+      const idx=customers.findIndex(c=>String(c?.id)===String(r.customer_id));
+      if(idx>=0){
+        customers[idx]={...customers[idx],plan:r.requested_plan};
+        state.customers=customers;
+        await sb(
+          `cs_energy_app_state?user_id=eq.${encodeURIComponent(r.owner_user_id)}`,
+          'PATCH',
+          {data:state,updated_at:new Date().toISOString()}
+        );
+      }
+    }
+
+    // Also update the portal snapshot so both customer and staff views agree immediately.
+    const snapshotRows=await sb(
+      `customer_portal_snapshots?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}&select=payload`
+    );
+    const snapshotRow=snapshotRows?.[0];
+    if(snapshotRow?.payload){
+      const payload=snapshotRow.payload;
+      payload.customer={...(payload.customer||{}),plan:r.requested_plan};
+      await sb(
+        `customer_portal_snapshots?owner_user_id=eq.${encodeURIComponent(r.owner_user_id)}&customer_id=eq.${encodeURIComponent(r.customer_id)}`,
+        'PATCH',
+        {payload,updated_at:new Date().toISOString()}
+      );
+    }
   }
 }
 
