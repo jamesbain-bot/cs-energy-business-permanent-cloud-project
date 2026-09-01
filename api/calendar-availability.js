@@ -5,11 +5,12 @@ function b64url(input) {
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
-async function getAccessToken(clientEmail, privateKey) {
+async function getAccessToken(clientEmail, privateKey, delegatedUser) {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claim = b64url(JSON.stringify({
     iss: clientEmail,
+    sub: delegatedUser,
     scope: 'https://www.googleapis.com/auth/calendar.readonly',
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
@@ -66,7 +67,8 @@ function addLocalDateRange(set, startIso, endIso) {
 module.exports = async function handler(req, res) {
   try {
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-    const calendarId = process.env.GOOGLE_CALENDAR_ID;
+    const calendarId = (process.env.GOOGLE_CALENDAR_ID || '').trim();
+    const delegatedUser = (process.env.GOOGLE_WORKSPACE_USER || 'james.bain@competasolar.es').trim();
 
     if (!raw || !calendarId) {
       return res.status(200).json({
@@ -87,7 +89,6 @@ module.exports = async function handler(req, res) {
     }
 
     const clientEmail = credentials.client_email;
-    console.log('Google service account:', clientEmail);
     const privateKey = credentials.private_key;
 
     if (!clientEmail || !privateKey) {
@@ -101,7 +102,7 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid date range' });
     }
 
-    const token = await getAccessToken(clientEmail, privateKey);
+    const token = await getAccessToken(clientEmail, privateKey, delegatedUser);
 
     // A UTC envelope safely covers the requested Madrid local dates.
     const timeMin = `${from}T00:00:00Z`;
@@ -149,7 +150,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({
       configured: true,
       busyDates: [],
-      error: error.message
+      error: 'Calendar availability could not be loaded'
     });
   }
 };
