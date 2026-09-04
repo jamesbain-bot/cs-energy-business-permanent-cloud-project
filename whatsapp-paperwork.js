@@ -35,9 +35,8 @@
     const host=document.querySelector('#businessDocContent .doc-report');
     if(!host) throw new Error('Could not build document');
     await loadHtml2Pdf();
-    const q=(window.data?.quotes||[]).find(x=>x.id===quoteId);
     const label=LABELS[type]?.[0]||'Document';
-    const filename=safeName(`CS-Energy-${q?.ref||''}-${label}.pdf`);
+    const filename=safeName(`CS-Energy-${quoteId}-${label}.pdf`);
     const worker=html2pdf().set({
       margin:[8,8,8,8],
       filename,
@@ -53,36 +52,26 @@
 
   async function whatsappPaperwork(quoteId,type){
     try{
-      const q=(window.data?.quotes||[]).find(x=>x.id===quoteId);
-      if(!q) return alert('Quote not found.');
-      const c=typeof customer==='function'?customer(q.customerId):(window.data?.customers||[]).find(x=>x.id===q.customerId);
-      const number=normaliseWhatsAppNumber(c?.phone);
-      if(!number) return alert('Add a WhatsApp number to this customer first.');
-
       const {blob,filename}=await buildPdf(quoteId,type);
       const file=new File([blob],filename,{type:'application/pdf'});
       const label=LABELS[type]?.[1]||'document';
-      const message=`Hi ${c.name}, please find your CS Energy ${label} ${q.ref||''}. Kind regards, James`;
+      const message=`Please find your CS Energy ${label}. Kind regards, James`;
 
-      // On phones/tablets and supported desktop browsers this opens the native share sheet
-      // with the actual PDF attached; WhatsApp can then be selected.
       if(navigator.canShare && navigator.canShare({files:[file]}) && navigator.share){
         await navigator.share({files:[file],text:message,title:filename});
       } else {
-        // Desktop fallback: download the PDF, then open the correct WhatsApp chat with the message ready.
         const a=document.createElement('a');
-        a.href=URL.createObjectURL(blob); a.download=filename;
+        const href=URL.createObjectURL(blob);
+        a.href=href; a.download=filename;
         document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(()=>URL.revokeObjectURL(a.href),30000);
-        window.open(`https://wa.me/${number}?text=${encodeURIComponent(message+'\n\nThe PDF has been downloaded ready to attach.')}`,'_blank');
-      }
+        setTimeout(()=>URL.revokeObjectURL(href),30000);
 
-      try{
-        if(window.data?.communications){
-          window.data.communications.push({id:typeof uid==='function'?uid('com_'):'com_'+Date.now(),customerId:c.id,quoteId:q.id,type:'WhatsApp',date:new Date().toISOString(),note:`${LABELS[type]?.[0]||'Document'} prepared for WhatsApp`});
-          if(typeof save==='function') save();
+        if(typeof whatsappCustomerQuote==='function'){
+          whatsappCustomerQuote(quoteId);
+        } else {
+          alert('PDF downloaded. Open the customer WhatsApp conversation and attach it.');
         }
-      }catch(e){}
+      }
     }catch(err){
       console.error(err);
       alert('Could not prepare the paperwork for WhatsApp: '+(err?.message||err));
@@ -93,36 +82,26 @@
 
   async function emailPaperwork(quoteId,type){
     try{
-      const q=(window.data?.quotes||[]).find(x=>x.id===quoteId);
-      if(!q) return alert('Quote not found.');
-      const c=typeof customer==='function'?customer(q.customerId):(window.data?.customers||[]).find(x=>x.id===q.customerId);
-      if(!c?.email) return alert('Add an email address to this customer first.');
-
       const {blob,filename}=await buildPdf(quoteId,type);
       const file=new File([blob],filename,{type:'application/pdf'});
       const label=LABELS[type]?.[1]||'document';
-      const subject=`CS Energy ${label} ${q.ref||''}`.trim();
-      const message=`Hi ${c.name},\n\nPlease find your CS Energy ${label} ${q.ref||''}.\n\nKind regards,\nJames`;
+      const message=`Please find your CS Energy ${label}. Kind regards, James`;
 
-      // Where the device/browser supports sharing a file, use the native share sheet
-      // so the PDF can be passed to Mail/Outlook/Gmail as an attachment.
       if(navigator.canShare && navigator.canShare({files:[file]}) && navigator.share){
-        await navigator.share({files:[file],title:subject,text:message});
+        await navigator.share({files:[file],title:filename,text:message});
       } else {
-        // Desktop fallback: download PDF and open the default mail client addressed to customer.
         const a=document.createElement('a');
-        a.href=URL.createObjectURL(blob); a.download=filename;
+        const href=URL.createObjectURL(blob);
+        a.href=href; a.download=filename;
         document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(()=>URL.revokeObjectURL(a.href),30000);
-        location.href=`mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message+'\n\nThe PDF has been downloaded ready to attach.')}`;
-      }
+        setTimeout(()=>URL.revokeObjectURL(href),30000);
 
-      try{
-        if(window.data?.communications){
-          window.data.communications.push({id:typeof uid==='function'?uid('com_'):'com_'+Date.now(),customerId:c.id,quoteId:q.id,type:'Email',date:new Date().toISOString(),note:`${LABELS[type]?.[0]||'Document'} prepared for email`});
-          if(typeof save==='function') save();
+        if(typeof emailCustomerQuote==='function'){
+          emailCustomerQuote(quoteId);
+        } else {
+          alert('PDF downloaded. Open your email app and attach it.');
         }
-      }catch(e){}
+      }
     }catch(err){
       console.error(err);
       alert('Could not prepare the paperwork for email: '+(err?.message||err));
