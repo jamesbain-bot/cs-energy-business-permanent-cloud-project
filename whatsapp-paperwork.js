@@ -47,7 +47,7 @@
     }).from(host).toPdf();
     const pdf=await worker.get('pdf');
     const blob=pdf.output('blob');
-    return {blob,filename,q};
+    return {blob,filename};
   }
 
   async function whatsappPaperwork(quoteId,type){
