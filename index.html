@@ -271,4 +271,5 @@ function exportBackup(){const payload={version:2,exportedAt:new Date().toISOStri
 window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.classList.remove('open')};window.addEventListener('online',()=>{if(cloudSession)pushCloudData()});if(sb)sb.auth.onAuthStateChange((event,session)=>{cloudSession=session;if(event==='SIGNED_OUT')setSyncStatus('Cloud: signed out')});if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});initAccess();
 </script>
 <script src="/whatsapp-paperwork.js"></script>
+<script src="/customer-pipeline.js"></script>
 </body></html>
