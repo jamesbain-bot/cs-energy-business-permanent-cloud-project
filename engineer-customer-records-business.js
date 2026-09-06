@@ -14,7 +14,9 @@ function cleanJobs(id){
   }));
 }
 function publicMonitorUrl(s){
-  return s.solarWebUrl || s.publicDisplayUrl || s.solarWebPublicUrl ||
+  const solar=(s.solarWebUrl||'').trim();
+  if(solar)return solar;
+  return s.publicDisplayUrl || s.solarWebPublicUrl ||
          s.monitoringUrl || s.vrmUrl || s.victronUrl || s.solplanetUrl || '';
 }
 function cleanSystemV5(s,c){
@@ -30,7 +32,8 @@ function cleanSystemV5(s,c){
     battery:s.battery||'',batteryKwh:s.batteryKwh||0,
     monitoring:s.monitoring||s.monitorPlatform||'',
     monitorPlatform:s.monitorPlatform||'',
-    solarWebUrl:s.solarWebUrl||s.publicDisplayUrl||s.solarWebPublicUrl||'',
+    solarWebUrl:publicMonitorUrl(s),
+    publicDisplayUrl:publicMonitorUrl(s),
     monitorUrl:publicMonitorUrl(s),
     notes:s.notes||'',
     jobs:cleanJobs(s.customerId),
