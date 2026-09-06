@@ -1,0 +1,16 @@
+{
+  "name": "CS Energy Customer",
+  "short_name": "CS Customer",
+  "start_url": "/customer.html",
+  "display": "standalone",
+  "background_color": "#081018",
+  "theme_color": "#081018",
+  "icons": [
+    {
+      "src": "/customer-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
