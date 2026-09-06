@@ -36,4 +36,6 @@ let drawing=false;function setupSig(existing){const c=sig,ctx=c.getContext('2d')
 function clearSig(){setupSig(null)}
 async function saveJob(){const row={status:st.value,work_done:work.value.trim(),readings:readings.value.trim(),parts:parts.value.trim(),photos,signature:sig.toDataURL('image/png'),updated_at:new Date().toISOString()};const {error}=await sb.from('cs_energy_staff_jobs').update(row).eq('id',current.id);if(error)return alert(error.message);alert('Job update saved.');showTab('jobs');loadJobs()}
 init();
-</script></body></html>
+</script>
+<script src="/engineer-v3-addon.js"></script>
+</body></html>
