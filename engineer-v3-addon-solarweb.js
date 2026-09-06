@@ -3,8 +3,12 @@
 (function(){
 let customerMedia=[],activeCustomerId='',activeOwnerId='';
 
+function solarWebEmbedUrl(p){
+ const raw=p.solarWebPublicUrl||p.solarWebUrl||p.monitorUrl||'';
+ return /solarweb\.com\/PublicDisplay\?token=/i.test(raw)?raw:'';
+}
 function monitorUrl(p){
- const raw=p.solarWebUrl||p.vrmUrl||p.solplanetUrl||'';
+ const raw=p.solarWebPublicUrl||p.solarWebUrl||p.vrmUrl||p.solplanetUrl||'';
  if(raw && /^https?:\/\//i.test(raw)) return raw;
  const m=String(p.monitoring||'').toLowerCase();
  if(m.includes('fronius')||m.includes('solar.web')) return 'https://www.solarweb.com/';
@@ -22,7 +26,8 @@ window.openEngineerCustomer=async function(customerId,ownerId){
  detail.innerHTML=`<button onclick="showTab('systems')">← Systems</button>
  <div class="card"><div class="jobhead"><div><h2>${E(c.name||'Customer')}</h2><p>${E(c.address||c.location||'')}</p></div><span class="pill green">${E(c.plan||'No plan')}</span></div>
  <p>${E(c.phone||'')} ${c.email?'· '+E(c.email):''}</p><div class="kv"><span class="muted">Care plan</span><strong>${E(c.plan||'No plan')}</strong><span class="muted">Next service</span><span>${E(c.nextService||'—')}</span></div></div>
- <div class="card"><h3>Systems & installations</h3>${related.map(r=>{const p=r.payload||{};if(r.kind==='solar'){const u=monitorUrl(p);return `<div class="equipment"><strong>☀ ${E(p.inverter||'Solar system')} · ${E(p.pv||0)} kWp</strong><p>Serial: ${E(p.serial||'—')} · Panels: ${E(p.panels||'—')}</p><p>Battery: ${E(p.battery||'—')} ${p.batteryKwh?E(p.batteryKwh)+' kWh':''}</p>${u?`<button class="primary" onclick="window.open('${E(u)}','_blank','noopener')">📡 Live monitoring</button>`:'<span class="muted">Live monitoring not linked</span>'}</div>`}return `<div class="equipment"><strong>${E(p.type||'Installation')} · ${E([p.manufacturer,p.model].filter(Boolean).join(' ')||'Equipment')}</strong><p>Serial: ${E(p.serial||'—')} ${p.capacity?'· '+E(p.capacity):''}</p></div>`}).join('')}</div>
+ <div class="card"><h3>Systems & installations</h3>${related.map(r=>{const p=r.payload||{};if(r.kind==='solar'){const u=monitorUrl(p);return `<div class="equipment"><strong>☀ ${E(p.inverter||'Solar system')} · ${E(p.pv||0)} kWp</strong><p>Serial: ${E(p.serial||'—')} · Panels: ${E(p.panels||'—')}</p><p>Battery: ${E(p.battery||'—')} ${p.batteryKwh?E(p.batteryKwh)+' kWh':''}</p>${u?`<button class="primary" onclick="window.open('${E(u)}','_blank','noopener')">📡 Open monitoring</button>`:'<span class="muted">Live monitoring not linked</span>'}</div>`}return `<div class="equipment"><strong>${E(p.type||'Installation')} · ${E([p.manufacturer,p.model].filter(Boolean).join(' ')||'Equipment')}</strong><p>Serial: ${E(p.serial||'—')} ${p.capacity?'· '+E(p.capacity):''}</p></div>`}).join('')}</div>
+ ${(()=>{const fp=related.map(r=>r.payload||{}).find(p=>solarWebEmbedUrl(p));if(!fp)return '';const u=solarWebEmbedUrl(fp);return `<div class="card"><div class="jobhead"><h3>Live monitoring · Fronius Solar.web</h3><button onclick="window.open('${E(u)}','_blank','noopener')">Open Solar.web</button></div><div style="margin-top:12px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;min-height:620px"><iframe src="${E(u)}" title="Fronius Solar.web live monitoring" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:70vh;min-height:620px;border:0;background:#fff" allow="fullscreen"></iframe></div></div>`})()}
  <div class="card"><h3>Service & job history</h3>${jobs.length?jobs.map(j=>`<div class="equipment"><div class="jobhead"><strong>${E(j.date||'')} · ${E(j.type||'Job')}</strong><span class="pill">${E(j.status||'')}</span></div>${j.tech?`<p class="muted">Engineer: ${E(j.tech)}</p>`:''}${j.notes?`<p><strong>Reported:</strong> ${E(j.notes)}</p>`:''}${j.workDone?`<p><strong>Work carried out:</strong> ${E(j.workDone)}</p>`:''}${j.readings?`<p><strong>Readings:</strong> ${E(j.readings)}</p>`:''}${j.parts?`<p><strong>Parts:</strong> ${E(j.parts)}</p>`:''}</div>`).join(''):'<p class="muted">No previous job/service history.</p>'}</div>
  <div class="card"><h3>Customer / installation photos</h3><div class="field"><label>Photo category</label><select id="custPhotoCat"><option>Site photo</option><option>Installation</option><option>Serial number</option><option>Fault</option><option>Before work</option><option>After work</option><option>Other</option></select></div><div class="field"><label>Note</label><input id="custPhotoNote" placeholder="Optional note"></div><input type="file" accept="image/*" capture="environment" multiple onchange="uploadCustomerPhotos(event)"><div id="custMediaGrid" class="photos"></div></div>`;
  drawCustomerMedia();

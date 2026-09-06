@@ -6,7 +6,7 @@ function cleanJobs(id){return cJobs(id).map(j=>({id:j.id,date:j.date||'',type:j.
 function cleanSystemV3(s,c){
  return {id:s.id,customerId:s.customerId,customer:{name:c.name||'',phone:c.phone||'',email:c.email||'',location:c.location||'',address:c.address||'',plan:c.plan||'No plan',nextService:c.nextService||''},
  installed:s.installed||'',pv:s.pv||0,panels:s.panels||'',inverter:s.inverter||'',serial:s.serial||'',battery:s.battery||'',batteryKwh:s.batteryKwh||0,
- monitoring:s.monitoring||s.monitorPlatform||'',solarWebUrl:s.solarWebUrl||'',vrmUrl:s.vrmUrl||s.victronUrl||'',solplanetUrl:s.solplanetUrl||'',
+ monitoring:s.monitoring||s.monitorPlatform||'',solarWebPublicUrl:s.solarWebPublicUrl||s.solarWebUrl||s.publicDisplayUrl||s.monitorUrl||'',solarWebUrl:s.solarWebUrl||s.solarWebPublicUrl||s.publicDisplayUrl||s.monitorUrl||'',vrmUrl:s.vrmUrl||s.victronUrl||'',solplanetUrl:s.solplanetUrl||'',
  notes:s.notes||'',jobs:cleanJobs(s.customerId),
  batteries:(s.batteries||[]).map(b=>({manufacturer:b.manufacturer||'',model:b.model||'',serial:b.serial||'',capacity:b.capacity||'',location:b.location||'',notes:b.notes||''})),
  evChargers:(s.evChargers||[]).map(x=>({manufacturer:x.manufacturer||'',model:x.model||'',serial:x.serial||'',capacity:x.capacity||'',location:x.location||'',notes:x.notes||''}))
