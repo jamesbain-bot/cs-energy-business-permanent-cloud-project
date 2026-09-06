@@ -12,9 +12,9 @@
 <div class="tabs"><button id="tHome" class="active" onclick="tab('home')">Home</button><button id="tSystem" onclick="tab('system')">My System</button><button id="tMonitor" onclick="tab('monitor')">Live Monitoring</button><button id="tService" onclick="tab('service')">Service</button><button id="tDocs" onclick="tab('docs')">Documents</button></div>
 <div id="home"></div><div id="system" class="hidden"></div><div id="monitor" class="hidden"></div><div id="service" class="hidden"></div><div id="docs" class="hidden"></div>
 </div></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script>
-const sb=supabase.createClient('https://xhbftdpbowqpfnvsvybt.supabase.co','sb_publishable_cEsokxhFCIbvq4YUl5SoEQ_KsGSfeXt');
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+const sb=createClient('https://xhbftdpbowqpfnvsvybt.supabase.co','sb_publishable_cEsokxhFCIbvq4YUl5SoEQ_KsGSfeXt');
 let rec=null,access=null,me=null,docsRows=[],requestRows=[];
 const E=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const date=s=>s?new Date(s+'T00:00:00').toLocaleDateString('en-GB'):'—';
@@ -37,5 +37,6 @@ async function loadDocs(){const {data}=await sb.from('customer_documents').selec
 async function loadRequests(){const {data}=await sb.from('customer_service_requests').select('*').eq('customer_id',access.customer_id).order('created_at',{ascending:false});requestRows=data||[]}
 function renderRequests(){const h=document.getElementById('requestsHost');if(h)h.innerHTML=requestRows.length?requestRows.map(r=>`<div class="doc"><span>${E(date((r.created_at||'').slice(0,10)))} · ${E(r.request_type)}</span><span class="pill">${E(r.status)}</span></div>`).join(''):'<p class="muted">No open requests.</p>'}
 async function sendRequest(){if(!rdate.value)return alert('Choose a preferred date.');const row={owner_user_id:access.owner_user_id,customer_id:access.customer_id,customer_email:access.customer_email,customer_user_id:me.id,request_type:rtype.value,preferred_date:rdate.value,description:rdesc.value.trim(),status:'Requested'};const {error}=await sb.from('customer_service_requests').insert(row);if(error)return alert(error.message);rdesc.value='';await loadRequests();renderRequests();alert('Service request sent to CS Energy.')}
+Object.assign(window,{signIn,signUp,signOut,tab,sendRequest});
 boot();
 </script></body></html>
