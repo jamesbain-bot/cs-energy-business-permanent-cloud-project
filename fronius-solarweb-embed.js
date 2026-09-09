@@ -16,9 +16,6 @@ function legacyViewerUrl(url){
 function show(id){
  const s=data.systems.find(x=>x.id===id); if(!s)return alert('System not found.');
  const url=(s.solarWebUrl||'').trim(); if(!url)return alert('No Solar.web Public Display URL has been added.');
-
- // Keep Solar.web running under the original Vercel hostname that is already
- // authorised in existing Fronius Public Display settings.
  const viewer=legacyViewerUrl(url);
 
  let m=document.getElementById('solarWebModal');
@@ -27,12 +24,18 @@ function show(id){
    m.id='solarWebModal';
    m.className='modal';
    m.style.zIndex='1700';
-   m.innerHTML='<div class="modalbox wide" style="width:min(1400px,98vw);height:94vh;display:flex;flex-direction:column">'+
-   '<div class="modaltop"><h2>Live Monitoring · Fronius Solar.web</h2><div>'+
-   '<a id="solarWebExternal" class="ghost" target="_blank" rel="noopener">Open monitoring</a> '+
-   '<button class="close" onclick="closeModal(\\'solarWebModal\\')">×</button></div></div>'+
-   '<div style="flex:1;min-height:0;border:1px solid #2b4054;border-radius:14px;overflow:hidden;background:white">'+
-   '<iframe id="solarWebFrame" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div></div>';
+   m.innerHTML=`<div class="modalbox wide" style="width:min(1400px,98vw);height:94vh;display:flex;flex-direction:column">
+     <div class="modaltop">
+       <h2>Live Monitoring · Fronius Solar.web</h2>
+       <div>
+         <a id="solarWebExternal" class="ghost" target="_blank" rel="noopener">Open monitoring</a>
+         <button class="close" onclick="closeModal('solarWebModal')">×</button>
+       </div>
+     </div>
+     <div style="flex:1;min-height:0;border:1px solid #2b4054;border-radius:14px;overflow:hidden;background:white">
+       <iframe id="solarWebFrame" style="width:100%;height:100%;border:0" allowfullscreen></iframe>
+     </div>
+   </div>`;
    document.body.appendChild(m);
  }
  document.getElementById('solarWebExternal').href=viewer;
@@ -83,7 +86,7 @@ document.addEventListener('submit',e=>{
      save();
      render();
    }
- },0)
+ },0);
 },true);
 
 ensureField();
