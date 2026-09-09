@@ -1,6 +1,4 @@
 (function(){
-const LEGACY_HOST='https://cs-energy-business-permanent-cloud.vercel.app';
-
 function ensureField(){
  const f=document.getElementById('systemForm'); if(!f||f.querySelector('[name="solarWebUrl"]'))return;
  const g=f.querySelector('.formgrid'); if(!g)return;
@@ -9,14 +7,17 @@ function ensureField(){
  g.appendChild(d);
 }
 
-function legacyViewerUrl(url){
- return LEGACY_HOST+'/solarweb-viewer.html?url='+encodeURIComponent(url);
-}
-
 function show(id){
  const s=data.systems.find(x=>x.id===id); if(!s)return alert('System not found.');
  const url=(s.solarWebUrl||'').trim(); if(!url)return alert('No Solar.web Public Display URL has been added.');
- const viewer=legacyViewerUrl(url);
+
+ // Existing systems: open the stored Solar.web URL directly.
+ // New systems created after this update can be flagged solarWebEmbed=true
+ // and will use the in-app iframe.
+ if(s.solarWebEmbed!==true){
+   window.open(url,'_blank','noopener,noreferrer');
+   return;
+ }
 
  let m=document.getElementById('solarWebModal');
  if(!m){
@@ -28,7 +29,7 @@ function show(id){
      <div class="modaltop">
        <h2>Live Monitoring · Fronius Solar.web</h2>
        <div>
-         <a id="solarWebExternal" class="ghost" target="_blank" rel="noopener">Open monitoring</a>
+         <a id="solarWebExternal" class="ghost" target="_blank" rel="noopener">Open Solar.web</a>
          <button class="close" onclick="closeModal('solarWebModal')">×</button>
        </div>
      </div>
@@ -38,8 +39,8 @@ function show(id){
    </div>`;
    document.body.appendChild(m);
  }
- document.getElementById('solarWebExternal').href=viewer;
- document.getElementById('solarWebFrame').src=viewer;
+ document.getElementById('solarWebExternal').href=url;
+ document.getElementById('solarWebFrame').src=url;
  m.classList.add('open');
 }
 
@@ -78,11 +79,21 @@ document.addEventListener('submit',e=>{
  if(e.target?.id!=='systemForm')return;
  const f=e.target,v=f.elements.solarWebUrl?.value?.trim();
  if(!v)return;
+
+ // Capture whether this was a brand-new system before the original form
+ // handler clears editingSystemId.
+ const wasNew=!editingSystemId;
+
  setTimeout(()=>{
    let s=editingSystemId?data.systems.find(x=>x.id===editingSystemId):data.systems[data.systems.length-1];
    if(s){
      s.solarWebUrl=v;
      s.monitorPlatform=s.monitorPlatform||'Fronius Solar.web';
+
+     // Only brand-new systems get embedding enabled automatically.
+     // Existing systems remain untouched and therefore open externally.
+     if(wasNew && typeof s.solarWebEmbed==='undefined') s.solarWebEmbed=true;
+
      save();
      render();
    }
