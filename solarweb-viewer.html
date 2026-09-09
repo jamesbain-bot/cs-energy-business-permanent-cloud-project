@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CS Energy Live Monitoring</title>
+<style>
+html,body{margin:0;width:100%;height:100%;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#msg{display:none;padding:20px;color:#111}
+iframe{width:100%;height:100%;border:0;display:block}
+</style>
+</head>
+<body>
+<div id="msg">No Solar.web Public Display URL supplied.</div>
+<iframe id="f" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+<script>
+const u=new URLSearchParams(location.search).get('url')||'';
+if(/^https:\/\/(www\.)?solarweb\.com\//i.test(u)){
+ document.getElementById('f').src=u;
+}else{
+ document.getElementById('f').style.display='none';
+ document.getElementById('msg').style.display='block';
+}
+</script>
+</body>
+</html>
