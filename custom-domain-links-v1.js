@@ -10,7 +10,7 @@ window.copyCustomerAppLink=function(){
 window.copyPortalLink=window.copyCustomerAppLink;
 })();
 
-/* CS Energy standalone facturas, v1.1, 6 October 2026.
+/* CS Energy standalone facturas, v1.2, 6 October 2026.
  * Additive extension: preserves the existing domain links above and uses the
  * existing customerInvoices store and save()/cloud-sync path. No schema change.
  * This file is already included twice by index.html, so installation is guarded.
@@ -50,14 +50,65 @@ window.copyPortalLink=window.copyCustomerAppLink;
     return `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="${type}" ${attributes}></div>`;
   }
   function error(message) { $('sfError').textContent = message; $('sfError').hidden = !message; }
+  // Use the same billing fields for existing customers and new customers.
+  // Older imports sometimes used nie/nif rather than the canonical taxId.
+  const customerFields = {
+    name:'sfNewName', taxId:'sfNewTax', address:'sfNewAddress', location:'sfNewLocation',
+    postalCode:'sfNewPostcode', province:'sfNewProvince', country:'sfNewCountry',
+    email:'sfNewEmail', phone:'sfNewPhone'
+  };
+  function customerDetails(record = {}) {
+    const value = (...keys) => {
+      for (const key of keys) {
+        const v = record?.[key];
+        if ((typeof v === 'string' || typeof v === 'number') && String(v).trim()) return String(v).trim();
+      }
+      return '';
+    };
+    return {
+      name:value('name','customerName','customer_name','companyName'),
+      taxId:value('taxId','nie','NIE','nif','NIF','cif','CIF','tax_id','customer_tax_id','vatNumber'),
+      address:value('address','billingAddress','billing_address','streetAddress','customer_address'),
+      location:value('location','town','city','municipality'),
+      postalCode:value('postalCode','postcode','postCode','postal_code','zipCode','zip'),
+      province:value('province','region','state'), country:value('country'),
+      email:value('email','customer_email'), phone:value('phone','telephone','mobile','customer_phone')
+    };
+  }
+  function readCustomerDetails() {
+    return Object.fromEntries(Object.entries(customerFields).map(([key,id]) => [key,$(id).value.trim()]));
+  }
   function setCustomerMode() {
-    const isNew = $('sfCustomer').value === '__new__';
-    $('sfNewCustomer').hidden = !isNew;
-    $('sfNewCustomer').querySelectorAll('input').forEach(x => { x.disabled = !isNew; });
-    $('sfNewName').required = isNew;
-    const c = data.customers.find(x => x.id === $('sfCustomer').value);
-    $('sfCustomerDetails').textContent = c ? [c.address || c.location, c.taxId ? 'NIE/NIF/CIF: ' + c.taxId : '', c.email].filter(Boolean).join(' · ') : '';
+    const selected = $('sfCustomer').value, isNew = selected === '__new__';
+    const c = data.customers.find(x => x.id === selected), details = customerDetails(c);
+    $('sfNewCustomer').hidden = !selected;
+    for (const [key,id] of Object.entries(customerFields)) {
+      $(id).disabled = !selected;
+      $(id).value = details[key];
+    }
+    $('sfCustomerDetails').textContent = selected ? (isNew
+      ? 'Enter the customer details below. Name, NIE / NIF / CIF and full billing address are required.'
+      : 'Check the details below. They will appear on this factura. Name, NIE / NIF / CIF and full billing address are required.') : '';
+    $('sfUpdateCustomerRow').hidden = !c;
+    $('sfUpdateCustomer').disabled = !c;
+    $('sfUpdateCustomer').checked = false;
     error('');
+  }
+  function customerForInvoice(inv) {
+    const stored = inv.customerSnapshot;
+    const current = customerDetails(data.customers.find(x => x.id === inv.customerId));
+    if (!stored) return current;
+    const snapshot = customerDetails(stored);
+    // New invoices freeze all customer fields. Old incomplete snapshots may use
+    // current data only for fields that were empty, never replacing stored details.
+    if (inv.customerDetailsVersion >= 2) return snapshot;
+    return Object.fromEntries(Object.keys(snapshot).map(key => [key,snapshot[key] || current[key]]));
+  }
+  function customerBlock(record) {
+    const c = customerDetails(record);
+    const detailsRow = (label,value,required = false) => value || required
+      ? `<tr><th scope="row" style="width:150px;text-align:left;vertical-align:top;padding:5px 12px 5px 0;border:0;font-weight:600">${label}</th><td style="padding:5px 0;border:0;white-space:pre-wrap;overflow-wrap:anywhere">${h(value || 'Not recorded')}</td></tr>` : '';
+    return `<section class="sf-billing-details" style="break-inside:avoid;margin:18px 0"><h2>Customer details / Datos del cliente</h2><table aria-label="Customer billing details" style="width:100%;border-collapse:collapse;margin:0">${detailsRow('Name / Nombre',c.name,true)}${detailsRow('NIE / NIF / CIF',c.taxId,true)}${detailsRow('Address / Dirección',c.address,true)}${detailsRow('Postcode / C. postal',c.postalCode)}${detailsRow('Town / Localidad',c.location)}${detailsRow('Province / Provincia',c.province)}${detailsRow('Country / País',c.country)}${detailsRow('Email',c.email)}${detailsRow('Phone / Teléfono',c.phone)}</table></section>`;
   }
   function addLine(line = {}) {
     const tr = document.createElement('tr');
@@ -100,9 +151,7 @@ window.copyPortalLink=window.copyCustomerAppLink;
     $('standaloneFacturaModal').classList.add('open'); select.focus();
   }
   function close() { $('standaloneFacturaModal').classList.remove('open'); returnFocus?.focus?.(); }
-  function snapshotCustomer(c) {
-    return Object.fromEntries(['name','address','location','taxId','email','phone'].map(k => [k, c[k] || '']));
-  }
+  function snapshotCustomer(c) { return customerDetails(c); }
   function snapshotCompany() {
     return Object.fromEntries(['companyName','companyAddress','companyTaxId','companyWeb','companyPhone','companyBank','bankAccountHolder','bankIban','bankBic','bankIban2','bankBic2','bankPaymentNote','invoiceFooter'].map(k => [k, data.settings[k] || '']));
   }
@@ -117,23 +166,31 @@ window.copyPortalLink=window.copyCustomerAppLink;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) return error('Choose an invoice date.');
     if (dueDate && dueDate < invoiceDate) return error('Payment due date cannot be before the invoice date.');
     if (!lines.length || lines.some(x => !x.description || ![x.quantity,x.unitPriceNet,x.taxRate,x.lineTotalNet,x.ivaAmount].every(Number.isFinite) || x.quantity <= 0 || x.unitPriceNet < 0 || x.taxRate < 0 || x.taxRate > 100)) return error('Add at least one complete invoice item with a positive quantity and valid price and IVA.');
-    let c = data.customers.find(x => x.id === $('sfCustomer').value), newCustomer = null;
-    if ($('sfCustomer').value === '__new__') {
-      const name = $('sfNewName').value.trim(), taxId = $('sfNewTax').value.trim(), email = $('sfNewEmail').value.trim();
-      if (!name) return error('Enter the customer name.');
-      const match = data.customers.find(x => (taxId && normal(x.taxId) === normal(taxId)) || (email && normal(x.email) === normal(email)));
+    const selectedId = $('sfCustomer').value, details = readCustomerDetails();
+    if (!details.name) return error('Enter the customer / business name.');
+    if (!details.taxId) return error('Enter the customer NIE / NIF / CIF.');
+    if (!details.address) return error('Enter the full customer billing address.');
+    let c = data.customers.find(x => x.id === selectedId), newCustomer = null, updatedCustomer = null;
+    if (selectedId === '__new__') {
+      const match = data.customers.find(x => {
+        const existing = customerDetails(x);
+        return (details.taxId && normal(existing.taxId) === normal(details.taxId)) || (details.email && normal(existing.email) === normal(details.email));
+      });
       if (match) { $('sfCustomer').value = match.id; setCustomerMode(); return error(`An existing customer matches those details: ${match.name}. They are now selected. Check and save again.`); }
-      newCustomer = c = {id:uid('c_'), name,taxId,email,phone:$('sfNewPhone').value.trim(),address:$('sfNewAddress').value.trim(),location:$('sfNewLocation').value.trim(),plan:'No care plan',nextService:'',notes:'',portalEnabled:false,createdAt:new Date().toISOString()};
+      newCustomer = c = {id:uid('c_'),...details,plan:'No care plan',nextService:'',notes:'',portalEnabled:false,createdAt:new Date().toISOString()};
+    } else if (c && $('sfUpdateCustomer').checked) {
+      updatedCustomer = {...c,...details,updatedAt:new Date().toISOString()};
     }
     if (!c) return error('Choose or add a customer.');
     const t = totals(lines);
     if (!Object.values(t).every(Number.isFinite) || cents(t.totalGross) > Number.MAX_SAFE_INTEGER) return error('Invoice total is too large.');
-    const inv = {id:uid('cinv_'),source:'standalone',customerId:c.id,customerSnapshot:snapshotCustomer(c),companySnapshot:snapshotCompany(),invoiceNumber,invoiceDate,dueDate,currency:'EUR',lines,...t,ivaRate:new Set(lines.map(x => x.taxRate)).size === 1 ? lines[0].taxRate : null,paymentStatus:$('sfStatus').value,notes:$('sfNotes').value.trim(),showLinePrices:$('sfShowPrices').checked,createdAt:new Date().toISOString()};
+    const inv = {id:uid('cinv_'),source:'standalone',customerId:c.id,customerSnapshot:snapshotCustomer(details),customerDetailsVersion:2,companySnapshot:snapshotCompany(),invoiceNumber,invoiceDate,dueDate,currency:'EUR',lines,...t,ivaRate:new Set(lines.map(x => x.taxRate)).size === 1 ? lines[0].taxRate : null,paymentStatus:$('sfStatus').value,notes:$('sfNotes').value.trim(),showLinePrices:$('sfShowPrices').checked,createdAt:new Date().toISOString()};
     submitting = true; $('sfSave').disabled = true;
     const oldInvoices = data.customerInvoices, oldCustomers = data.customers;
     try {
       data.customerInvoices = [...invoices(), inv];
       if (newCustomer) data.customers = [...data.customers, newCustomer];
+      else if (updatedCustomer) data.customers = data.customers.map(x => x.id === updatedCustomer.id ? updatedCustomer : x);
       save(); // Existing local persistence and automatic cloud synchronization.
     } catch (e) {
       data.customerInvoices = oldInvoices; data.customers = oldCustomers;
@@ -151,13 +208,13 @@ window.copyPortalLink=window.copyCustomerAppLink;
     return `<h2>Payment details</h2>${co.bankAccountHolder ? '<p>Account holder: <strong>' + h(co.bankAccountHolder) + '</strong></p>' : ''}${accounts || '<p>' + h(co.companyBank).replace(/\n/g,'<br>') + '</p>'}<p><strong>Payment reference:</strong> ${h(ref)}</p>${co.bankPaymentNote ? '<p>' + h(co.bankPaymentNote).replace(/\n/g,'<br>') + '</p>' : ''}`;
   }
   function invoiceHtml(inv) {
-    const c = inv.customerSnapshot || customer(inv.customerId), co = inv.companySnapshot || data.settings;
+    const c = customerForInvoice(inv), co = inv.companySnapshot || data.settings;
     const logo = data.settings.companyLogo || (typeof DEFAULT_COMPANY_LOGO !== 'undefined' ? DEFAULT_COMPANY_LOGO : '');
     const groups = new Map();
     (inv.lines || []).forEach(l => { const rate = Number(l.taxRate), g = groups.get(rate) || {net:0,vat:0}; g.net += cents(l.lineTotalNet); g.vat += cents(l.ivaAmount); groups.set(rate,g); });
     const rows = (inv.lines || []).map(l => `<tr><td style="white-space:pre-wrap;overflow-wrap:anywhere">${h(l.description)}</td><td>${Number(l.quantity)}</td>${inv.showLinePrices ? `<td>${money(l.unitPriceNet)}</td><td>${Number(l.taxRate)}%</td><td>${money(l.lineTotalNet)}</td>` : ''}</tr>`).join('');
     return `<div class="doc-report sf-document"><div style="display:flex;justify-content:space-between;gap:28px;align-items:flex-start"><div>${logo ? `<img src="${h(logo)}" alt="${h(co.companyName || 'CS Energy')}" style="width:300px;max-width:100%;max-height:125px;object-fit:contain;object-position:left center;margin-bottom:14px">` : '<h1>' + h(co.companyName || 'CS Energy') + '</h1>'}<p>${h(co.companyAddress).replace(/\n/g,'<br>')}<br>${h(co.companyTaxId)}<br>${h(co.companyWeb)} ${h(co.companyPhone)}</p></div><div style="text-align:right;padding-top:8px"><strong>FACTURA</strong><br>${h(inv.invoiceNumber)}<br>${prettyDate(inv.invoiceDate)}${inv.dueDate ? '<br>Due: ' + prettyDate(inv.dueDate) : ''}</div></div>
-      <h2>Customer</h2><p><strong>${h(c.name)}</strong><br>${h(c.address || c.location).replace(/\n/g,'<br>')}${c.taxId ? '<br>NIE/NIF/CIF: ' + h(c.taxId) : ''}<br>${h(c.email)} ${h(c.phone)}</p>
+      ${customerBlock(c)}
       <table><thead><tr><th>Description</th><th>Qty</th>${inv.showLinePrices ? '<th>Unit ex IVA</th><th>IVA</th><th>Total ex IVA</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
       <p style="text-align:right">Base imponible ${money(inv.subtotalNet)}${[...groups.entries()].map(([rate,g]) => `<br>IVA ${rate}%${groups.size > 1 ? ' on ' + money(g.net / 100) : ''}: ${money(g.vat / 100)}`).join('')}<br><span class="total">TOTAL ${money(inv.totalGross)}</span></p>
       <p><strong>Payment status:</strong> ${h(inv.paymentStatus || 'Unpaid')}</p>${inv.notes ? '<p style="white-space:pre-wrap">' + h(inv.notes) + '</p>' : ''}${banks(co,inv.invoiceNumber)}${co.invoiceFooter ? '<p>' + h(co.invoiceFooter).replace(/\n/g,'<br>') + '</p>' : ''}</div>`;
@@ -189,7 +246,7 @@ window.copyPortalLink=window.copyCustomerAppLink;
   function install() {
     if ((typeof CUSTOMER_APP_MODE !== 'undefined' && CUSTOMER_APP_MODE) || /^(my|engineer)\.csenergy\.solar$/.test(location.hostname) || !document.querySelector('#app main')) return;
     const style = document.createElement('style');
-    style.textContent = `#standaloneFacturaModal{z-index:65}#standaloneFacturaModal [hidden]{display:none!important}#sfNewCustomer{margin:14px 0}#sfCustomerDetails{margin-bottom:12px}#sfError{padding:12px;border:1px solid var(--red);border-radius:10px;color:var(--red);margin-top:12px}#standaloneFacturaModal .quote-lines{min-width:680px}#sfLines .sf-desc{min-width:200px}#sfLines .sf-total{white-space:nowrap}#facturas{min-width:0}#sfSearch{min-width:0;flex:1 1 210px}#facturas .table-wrap{max-width:100%}.sf-create{display:inline-block!important}.sf-document tr{break-inside:avoid}.sf-document thead{display:table-header-group}@media(max-width:640px){#facturas .top{flex-wrap:wrap}#facturas .toolbar{flex-wrap:wrap}#standaloneFacturaModal .quote-lines{min-width:0}#standaloneFacturaModal .quote-lines thead{display:none}#sfLines,#sfLines tr,#sfLines td{display:block}#sfLines tr{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}#sfLines td{padding:0;border:0;min-width:0}#sfLines td:first-child{grid-column:1/-1}#sfLines input{min-width:0;width:100%}#sfLines td:before{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}#sfLines td:nth-child(1):before{content:'Description'}#sfLines td:nth-child(2):before{content:'Quantity'}#sfLines td:nth-child(3):before{content:'Unit ex IVA €'}#sfLines td:nth-child(4):before{content:'IVA %'}#sfLines td:nth-child(5):before{content:'Total ex IVA'}#sfLines td:last-child{grid-column:1/-1;text-align:right}#standaloneFacturaModal .formactions{flex-wrap:wrap}}`;
+    style.textContent = `#standaloneFacturaModal{z-index:65}#standaloneFacturaModal [hidden]{display:none!important}#sfNewCustomer{margin:14px 0}#sfCustomerDetails{margin-bottom:12px}#sfError{padding:12px;border:1px solid var(--red);border-radius:10px;color:var(--red);margin-top:12px}#standaloneFacturaModal .quote-lines{min-width:680px}#sfLines .sf-desc{min-width:200px}#sfLines .sf-total{white-space:nowrap}#facturas{min-width:0}#sfSearch{min-width:0;flex:1 1 210px}#facturas .table-wrap{max-width:100%}.sf-create{display:inline-block!important}.sf-document tr{break-inside:avoid}.sf-document thead{display:table-header-group}@media print{html,body{background:#fff!important}}@media(max-width:640px){#facturas .top{flex-wrap:wrap}#facturas .toolbar{flex-wrap:wrap}#standaloneFacturaModal .quote-lines{min-width:0}#standaloneFacturaModal .quote-lines thead{display:none}#sfLines,#sfLines tr,#sfLines td{display:block}#sfLines tr{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}#sfLines td{padding:0;border:0;min-width:0}#sfLines td:first-child{grid-column:1/-1}#sfLines input{min-width:0;width:100%}#sfLines td:before{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}#sfLines td:nth-child(1):before{content:'Description'}#sfLines td:nth-child(2):before{content:'Quantity'}#sfLines td:nth-child(3):before{content:'Unit ex IVA €'}#sfLines td:nth-child(4):before{content:'IVA %'}#sfLines td:nth-child(5):before{content:'Total ex IVA'}#sfLines td:last-child{grid-column:1/-1;text-align:right}#standaloneFacturaModal .formactions{flex-wrap:wrap}}`;
     document.head.appendChild(style);
     const section = document.createElement('section'); section.id = 'facturas'; section.className = 'view';
     section.innerHTML = '<div class="top"><div><div class="eyebrow">Customer invoices</div><h1>Facturas</h1><p>Create a factura directly — no quote, job or installation required.</p></div></div><div class="toolbar"><input id="sfSearch" class="search" aria-label="Search facturas" placeholder="Search factura or customer…"><select id="sfFilter" class="filter" aria-label="Payment status"><option value="all">All payment statuses</option><option>Unpaid</option><option>Part Paid</option><option>Paid</option></select></div><div class="card table-wrap"><table class="table"><thead><tr><th>Factura</th><th>Customer</th><th>Date</th><th>Total incl. IVA</th><th>Payment</th><th>Source</th><th></th></tr></thead><tbody id="sfInvoiceList"></tbody></table></div>';
@@ -201,7 +258,7 @@ window.copyPortalLink=window.copyCustomerAppLink;
     if (quoteTop) { let actions = quoteTop.querySelector('.btnrow'); if (!actions) { actions = document.createElement('div'); actions.className = 'btnrow'; const old = quoteTop.querySelector('button.primary'); if (old) actions.appendChild(old); quoteTop.appendChild(actions); } actions.appendChild(button('+ Create factura', () => open(), 'ghost sf-create')); actions.appendChild(button('View facturas', () => switchView('facturas'), 'ghost sf-create')); }
     document.querySelector('#customers .top .btnrow')?.appendChild(button('+ Create factura', () => open(), 'ghost sf-create'));
     const modal = document.createElement('div'); modal.id = 'standaloneFacturaModal'; modal.className = 'modal'; modal.setAttribute('role','dialog'); modal.setAttribute('aria-modal','true'); modal.setAttribute('aria-labelledby','sfTitle');
-    modal.innerHTML = `<div class="modalbox wide"><div class="modaltop"><h2 id="sfTitle">Create factura</h2><button type="button" class="close" id="sfClose" aria-label="Close factura form">×</button></div><p class="muted">This creates an invoice only — not a quote, job or system.</p><form id="sfForm"><div class="formgrid"><div class="field full"><label for="sfCustomer">Customer</label><select id="sfCustomer" required></select><small class="muted" id="sfCustomerDetails"></small></div></div><div class="formgrid" id="sfNewCustomer" hidden>${field('sfNewName','Customer / business name','text','maxlength="200"')}${field('sfNewTax','NIE / NIF / CIF','text','maxlength="50"')}${field('sfNewAddress','Invoice address','text','maxlength="500"')}${field('sfNewLocation','Town / location','text','maxlength="200"')}${field('sfNewEmail','Email','email','maxlength="254"')}${field('sfNewPhone','Phone','tel','maxlength="50"')}</div><div class="formgrid">${field('sfNumber','Factura number','text','required maxlength="100"')}${field('sfDate','Invoice date','date','required')}${field('sfDue','Payment due date (optional)','date')}<div class="field"><label for="sfStatus">Payment status</label><select id="sfStatus"><option>Unpaid</option><option>Part Paid</option><option>Paid</option></select></div></div><div class="section-head" style="margin-top:18px"><h2>Invoice items</h2><button type="button" class="ghost" id="sfAddLine">+ Add line</button></div><div class="table-wrap"><table class="quote-lines"><thead><tr><th>Description</th><th>Qty</th><th>Unit ex IVA €</th><th>IVA %</th><th>Total ex IVA</th><th></th></tr></thead><tbody id="sfLines"></tbody></table></div><div id="sfTotals" class="quote-summary" aria-live="polite"></div><div class="field" style="margin-top:14px"><label for="sfNotes">Notes (shown on factura)</label><textarea id="sfNotes" maxlength="6000"></textarea></div><label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="sfShowPrices" type="checkbox">Show individual item prices on PDF</label><p class="meta">Unticked: show descriptions, quantities and invoice totals only. Bank details come from Settings.</p><div id="sfError" role="alert" hidden></div><div class="formactions"><button type="button" class="ghost" id="sfCancel">Cancel</button><button type="submit" class="primary" id="sfSave">Save factura & open document</button></div></form></div>`;
+    modal.innerHTML = `<div class="modalbox wide"><div class="modaltop"><h2 id="sfTitle">Create factura</h2><button type="button" class="close" id="sfClose" aria-label="Close factura form">×</button></div><p class="muted">This creates an invoice only — not a quote, job or system.</p><form id="sfForm"><div class="formgrid"><div class="field full"><label for="sfCustomer">Customer</label><select id="sfCustomer" required></select><small class="muted" id="sfCustomerDetails"></small></div></div><div id="sfNewCustomer" hidden><h3>Customer billing details</h3><div class="formgrid">${field('sfNewName','Customer / business name *','text','required maxlength="200" autocomplete="organization"')}${field('sfNewTax','NIE / NIF / CIF *','text','required maxlength="50"')}<div class="field full"><label for="sfNewAddress">Full billing address *</label><textarea id="sfNewAddress" required maxlength="1000" autocomplete="street-address" placeholder="Street, building / house number, apartment or rural address"></textarea></div>${field('sfNewPostcode','Postcode','text','maxlength="30" autocomplete="postal-code"')}${field('sfNewLocation','Town / location','text','maxlength="200" autocomplete="address-level2"')}${field('sfNewProvince','Province / region','text','maxlength="200" autocomplete="address-level1"')}${field('sfNewCountry','Country','text','maxlength="100" autocomplete="country-name"')}${field('sfNewEmail','Email','email','maxlength="254" autocomplete="email"')}${field('sfNewPhone','Phone','tel','maxlength="50" autocomplete="tel"')}</div><label id="sfUpdateCustomerRow" style="display:flex;gap:8px;align-items:center;margin:12px 0"><input id="sfUpdateCustomer" type="checkbox">Also update the saved customer record with these details</label><p class="meta">All entered details appear on the factura. Changes apply to this factura only unless the box above is ticked.</p></div><div class="formgrid">${field('sfNumber','Factura number','text','required maxlength="100"')}${field('sfDate','Invoice date','date','required')}${field('sfDue','Payment due date (optional)','date')}<div class="field"><label for="sfStatus">Payment status</label><select id="sfStatus"><option>Unpaid</option><option>Part Paid</option><option>Paid</option></select></div></div><div class="section-head" style="margin-top:18px"><h2>Invoice items</h2><button type="button" class="ghost" id="sfAddLine">+ Add line</button></div><div class="table-wrap"><table class="quote-lines"><thead><tr><th>Description</th><th>Qty</th><th>Unit ex IVA €</th><th>IVA %</th><th>Total ex IVA</th><th></th></tr></thead><tbody id="sfLines"></tbody></table></div><div id="sfTotals" class="quote-summary" aria-live="polite"></div><div class="field" style="margin-top:14px"><label for="sfNotes">Notes (shown on factura)</label><textarea id="sfNotes" maxlength="6000"></textarea></div><label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="sfShowPrices" type="checkbox">Show individual item prices on PDF</label><p class="meta">Unticked: show descriptions, quantities and invoice totals only. Bank details come from Settings.</p><div id="sfError" role="alert" hidden></div><div class="formactions"><button type="button" class="ghost" id="sfCancel">Cancel</button><button type="submit" class="primary" id="sfSave">Save factura & open document</button></div></form></div>`;
     document.body.appendChild(modal);
     $('sfClose').onclick = close; $('sfCancel').onclick = close; $('sfCustomer').onchange = setCustomerMode; $('sfAddLine').onclick = () => addLine(); $('sfForm').onsubmit = saveInvoice; $('sfSearch').oninput = renderList; $('sfFilter').onchange = renderList;
     modal.addEventListener('keydown', event => {
@@ -231,11 +288,45 @@ window.copyPortalLink=window.copyCustomerAppLink;
       if (number && invoiceNumbers().some(x => normal(x) === normal(number))) return alert('Factura number ' + number + ' is already in use. Enter a different number.');
       return oldJobSave.apply(this, arguments);
     };
+    // Existing job/quote-generated facturas also use the explicit billing block.
+    // Never rewrite imported original PDF files, only the in-app invoice preview.
+    const oldDocHeader = window.docHeader;
+    if (typeof oldDocHeader === 'function') window.docHeader = function (type,q,c,docRef) {
+      const html = oldDocHeader.apply(this,arguments);
+      if (!/factura|invoice/i.test(String(type))) return html;
+      const holder = document.createElement('div'); holder.innerHTML = html;
+      const heading = [...holder.querySelectorAll('h2')].find(x => /^customer$/i.test(x.textContent.trim()));
+      if (!heading || heading.nextElementSibling?.tagName !== 'P') return html;
+      heading.nextElementSibling.remove();
+      const fragment = document.createElement('div'); fragment.innerHTML = customerBlock(c);
+      heading.replaceWith(fragment.firstElementChild);
+      return holder.innerHTML;
+    };
     const oldImported = window.viewImportedCustomerInvoice;
-    window.viewImportedCustomerInvoice = function (id) { if (invoices().find(x => x.id === id)?.source === 'standalone') return view(id); return oldImported.apply(this,arguments); };
+    window.viewImportedCustomerInvoice = function (id) {
+      const inv = invoices().find(x => x.id === id);
+      if (inv?.source === 'standalone') return view(id);
+      const result = oldImported.apply(this,arguments);
+      if (inv && $('businessDocContent')) {
+        const heading = [...$('businessDocContent').querySelectorAll('h2')].find(x => /^customer$/i.test(x.textContent.trim()));
+        if (heading && heading.nextElementSibling?.tagName === 'P') {
+          heading.nextElementSibling.remove();
+          const fragment = document.createElement('div'); fragment.innerHTML = customerBlock(customerForInvoice(inv));
+          heading.replaceWith(fragment.firstElementChild);
+          $('reportPrintHost').innerHTML = $('businessDocContent').innerHTML;
+        }
+      }
+      return result;
+    };
+    const oldJobView = window.viewJobInvoice;
+    if (typeof oldJobView === 'function') window.viewJobInvoice = function (id) {
+      const result = oldJobView.apply(this,arguments);
+      if (invoices().some(x => x.id === id) && $('businessDocContent') && $('reportPrintHost')) $('reportPrintHost').innerHTML = $('businessDocContent').innerHTML;
+      return result;
+    };
     renderList();
   }
-  window.CSStandaloneInvoices = {version:'1.1.0',open,view,render:renderList};
+  window.CSStandaloneInvoices = {version:'1.2.0',open,view,render:renderList};
   window.openStandaloneInvoice = open;
   window.viewStandaloneInvoice = view;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',install,{once:true}); else install();
