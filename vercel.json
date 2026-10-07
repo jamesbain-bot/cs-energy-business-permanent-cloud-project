@@ -30,5 +30,10 @@
       ],
       "destination": "/engineer.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/assistant.js": {
+      "maxDuration": 60
+    }
+  }
 }
