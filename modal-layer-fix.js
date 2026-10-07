@@ -48,3 +48,15 @@
     };
   }
 })();
+
+// Bootstrap the optional assistant from the shared business-app UI script.
+// This keeps the existing HTML and paperwork templates unchanged.
+(function () {
+  if (!document.getElementById('assistant') || document.getElementById('cs-energy-assistant-addon')) return;
+  if (typeof CUSTOMER_APP_MODE !== 'undefined' && CUSTOMER_APP_MODE) return;
+  const script = document.createElement('script');
+  script.id = 'cs-energy-assistant-addon';
+  script.src = '/assistant-v1.js';
+  script.defer = true;
+  document.head.appendChild(script);
+})();
