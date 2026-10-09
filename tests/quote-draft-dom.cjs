@@ -1,0 +1,36 @@
+// Synthetic DOM tests. No real customer records or provider requests.
+const { JSDOM } = require('jsdom');
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+(async()=>{
+ const html=fs.readFileSync('index.html','utf8');
+ const quote=html.match(/<div class="modal" id="quoteModal">[\s\S]*?<\/form><\/div><\/div>/)[0];
+ const dom=new JSDOM(quote,{url:'https://app.example.test',runScripts:'outside-only'}),w=dom.window;
+ w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+ w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};
+ const functions=['productSell','populateQuoteCustomers','nextQuoteRef','openQuoteModal','productOptions','addQuoteLine','selectLineProduct','collectQuoteLines','quoteTotals','updateQuoteSummary'].map(name=>html.split('\n').find(l=>l.startsWith('function '+name+'('))).join('\n');
+ w.eval(`var data={products:[{id:'p1',manufacturer:'Test',model:'panel',pricingMethod:'fixed',cost:80,sell:100}],customers:[{id:'c1',name:'Demo customer',location:'Demo'}],quotes:[],settings:{defaultDeposit:50}};var editingQuoteId=null;var CUSTOMER_APP_MODE=false;var owner='owner';var authCallback;var sb={auth:{getSession:async()=>({data:{session:{access_token:'fake',user:{id:owner}}}}),onAuthStateChange:f=>authCallback=f}};function esc(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;')}function eur(n){return '€'+Number(n).toFixed(2)};${functions};openQuoteModal();document.getElementById('quoteCustomer').value='c1';`);
+ const result={title:'Solar draft',scope:'Site survey pending.',lines:[{productId:'p1',description:'<img src=x onerror=alert(1)>',qty:10,cost:80,sell:100}],warnings:['Check compatibility'],missingItems:['Labour missing']};
+ let requests=0, fail=false, delay=false, release;
+ w.fetch=async(url,options)=>{assert.equal(url,'/api/quote-draft');assert.equal(JSON.parse(options.body).customerId,'c1');requests++;if(delay)await new Promise(r=>release=r);return {ok:!fail,json:async()=>fail?{error:'Service unavailable'}:result};};
+ w.eval(fs.readFileSync('quote-draft.js','utf8'));
+ const el=id=>w.document.getElementById('quote-ai-'+id),click=id=>el(id).click();
+ const until=async f=>{for(let i=0;i<100;i++){if(f())return;await new Promise(r=>setTimeout(r,5));}throw Error('Timed out');};
+ const open=()=>{click('open');el('prompt').value='10 panels';};
+ const generate=async()=>{click('generate');await until(()=>!el('apply').hidden);};
+ open();await generate();assert.equal(w.collectQuoteLines().length,0);assert.equal(el('preview').querySelectorAll('img').length,0);assert.match(el('preview').textContent,/€1210.00/);
+ click('apply');click('apply');await until(()=>!el('dialog').open);assert.equal(w.collectQuoteLines().length,1);assert.equal(w.data.quotes.length,0);
+ open();await generate();click('cancel');assert.equal(w.collectQuoteLines().length,1);
+ open();await generate();w.data.products[0].sell=110;click('apply');await until(()=>el('error').textContent.includes('Product prices'));assert.equal(w.collectQuoteLines().length,1);click('cancel');w.data.products[0].sell=100;
+ open();await generate();w.document.querySelector('.lineQty').value=5;click('apply');await until(()=>el('error').textContent.includes('quote changed'));click('cancel');
+ open();await generate();w.owner='other';click('apply');await until(()=>el('error').textContent.includes('sign-in changed'));click('cancel');w.owner='owner';
+ delay=true;open();click('generate');click('generate');await until(()=>release);const count=requests;click('cancel');release();await new Promise(r=>setTimeout(r,20));assert.equal(el('dialog').open,false);assert.equal(requests,count);assert.equal(el('apply').hidden,true);delay=false;
+ fail=true;open();click('generate');await until(()=>el('error').textContent==='Service unavailable');assert.equal(el('generate').disabled,false);click('cancel');fail=false;
+ open();await generate();el('prompt').value='Different work';el('prompt').dispatchEvent(new w.Event('input'));assert.equal(el('apply').hidden,true);click('cancel');
+ w.document.getElementById('quoteLineBody').replaceChildren();w.addQuoteLine();w.document.querySelector('.lineDesc').value='Unfinished manual work';w.document.querySelector('.lineQty').value=0;
+ open();await generate();click('apply');await until(()=>!el('dialog').open);assert.equal(w.document.querySelectorAll('#quoteLineBody tr').length,2,'Partial manual row preserved');assert.equal(w.document.querySelector('.lineDesc').value,'Unfinished manual work');
+ open();await generate();w.document.querySelector('.lineCost').value=99;click('apply');await until(()=>el('error').textContent.includes('quote changed'));click('cancel');
+ open();w.authCallback('SIGNED_OUT');assert.equal(el('dialog').open,false);
+ console.log('PASS: preview, exact totals, escaped output, no save/send, duplicate apply, cancel, stale prices/editor/account, late response, duplicate generation, failure recovery, changed prompt, sign-out.');
+ dom.window.close();
+})().catch(e=>{console.error(e);process.exit(1)});
