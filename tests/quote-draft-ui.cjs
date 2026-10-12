@@ -1,0 +1,52 @@
+const { chromium } = require('playwright');
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+(async () => {
+ const browser = await chromium.launch({ headless:true, executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium', args:['--no-sandbox'] });
+ try {
+  const page = await browser.newPage({viewport:{width:1100,height:950}});
+  const html = fs.readFileSync('index.html','utf8');
+  const styles = [...html.matchAll(/<style[^>]*>[\s\S]*?<\/style>/g)].map(m=>m[0]).join('');
+  const quote = html.match(/<div class="modal" id="quoteModal">[\s\S]*?<\/form><\/div><\/div>/)[0];
+  const draft = {title:'Solar draft',scope:'Supply listed equipment, subject to site survey.',lines:[{productId:'p1',description:'Test panel <img src=x onerror=alert(1)>',qty:10,cost:80,sell:100}],warnings:['Confirm mounting and compatibility.'],missingItems:['Labour not in price book.']};
+  let calls=0, wait=false, release, fail=false;
+  await page.route('https://app.example.test/**', async route=> {
+   if(route.request().method() !== 'POST') return route.fulfill({body:'<html></html>',contentType:'text/html'});
+   calls++; const request=route.request().postDataJSON(); assert.equal(request.customerId,'c1'); assert.equal(request.capacityKw,null);
+   if(wait) await new Promise(r=>release=r);
+   await route.fulfill({status:fail?503:200,json:fail?{error:'AI unavailable. Try later.'}:draft});
+  });
+  await page.goto('https://app.example.test/');
+  await page.setContent(styles+quote);
+  const functions = ['productSell','populateQuoteCustomers','nextQuoteRef','openQuoteModal','productOptions','addQuoteLine','selectLineProduct','collectQuoteLines','quoteTotals','updateQuoteSummary'].map(name=>html.split('\n').find(line=>line.startsWith('function '+name+'('))).join('\n');
+  await page.addScriptTag({content:`var data={products:[{id:'p1',manufacturer:'Test',model:'panel',pricingMethod:'fixed',cost:80,sell:100}],customers:[{id:'c1',name:'Demo customer',location:'Demo'}],quotes:[],settings:{defaultDeposit:50}};var editingQuoteId=null;var CUSTOMER_APP_MODE=false;var sb={auth:{getSession:async()=>({data:{session:{access_token:'fake',user:{id:'owner'}}}}),onAuthStateChange:()=>{}}};function esc(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;')}function eur(n){return '€'+Number(n).toFixed(2)};${functions};openQuoteModal();document.getElementById('quoteCustomer').value='c1';document.getElementById('quoteForm').onsubmit=e=>e.preventDefault();`});
+  await page.addScriptTag({content:fs.readFileSync('quote-draft.js','utf8')});
+  const open=async()=> {await page.locator('#quote-ai-open').click();await page.locator('#quote-ai-prompt').fill('10 panels, site survey pending.');};
+  const generate=async()=> {await page.locator('#quote-ai-generate').click();await page.locator('#quote-ai-apply').waitFor({state:'visible'});};
+  await open(); await generate();
+  assert.equal(await page.locator('#quote-ai-preview img').count(),0,'Model text is escaped');
+  assert.equal(await page.evaluate(()=>collectQuoteLines().length),0,'Generation does not alter quote');
+  assert.match(await page.locator('#quote-ai-preview').innerText(),/€1210.00/);
+  await page.screenshot({path:'/tmp/cs-quote-ai-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'No document overflow');
+  await page.screenshot({path:'/tmp/cs-quote-ai-mobile.png',fullPage:true});
+  await page.locator('#quote-ai-apply').click();
+  assert.equal(await page.evaluate(()=>collectQuoteLines().length),1);assert.equal(await page.evaluate(()=>data.quotes.length),0,'Apply does not save');
+  await open(); await generate(); await page.locator('#quote-ai-cancel').click();
+  assert.equal(await page.evaluate(()=>collectQuoteLines().length),1,'Cancel preserves lines');
+  await open(); await generate();
+  await page.evaluate(()=>data.products[0].sell=110);
+  await page.locator('#quote-ai-apply').click();await page.getByText(/Product prices have changed/).waitFor();
+  assert.equal(await page.evaluate(()=>collectQuoteLines().length),1);await page.locator('#quote-ai-cancel').click();
+  await page.evaluate(()=>data.products[0].sell=100);
+  await open(); await generate();await page.evaluate(()=>document.querySelector('.lineQty').value=5);
+  await page.locator('#quote-ai-apply').click();await page.getByText(/The quote changed/).waitFor();await page.locator('#quote-ai-cancel').click();
+  wait=true;await open();await page.locator('#quote-ai-generate').click();await page.waitForTimeout(80);await page.keyboard.press('Escape');release();await page.waitForTimeout(100);
+  assert.equal(await page.locator('#quote-ai-dialog').evaluate(d=>d.open),false,'Late response does not reopen cancelled modal');
+  wait=false;fail=true;await open();await page.locator('#quote-ai-generate').click();await page.getByText('AI unavailable. Try later.').waitFor();
+  assert.equal(await page.locator('#quote-ai-generate').isEnabled(),true);
+  await page.locator('#quote-ai-cancel').click();
+  console.log('PASS: draft preview, no save/send, tax totals, safe rendering, append/cancel, stale prices/editor, Escape during request, error recovery, desktop/mobile. Requests:',calls);
+ } finally { await browser.close(); }
+})().catch(e=>{console.error(e);process.exit(1)});
