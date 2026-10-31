@@ -17,10 +17,17 @@ Baseline: production commit `f62d0fc1348b878f51687be80647f9e012f6d6ce`.
 - WeasyPrint synthetic PDF rendered and visually checked: one-page standard quote, four-page 54-row long quote. Repeated table headings, all 50 additional rows and final totals retained; no observed clipping.
 - Synthetic after.pdf saved privately to Library as CS-Energy-Quote-Design-SAMPLE.pdf. Not an issued customer quotation.
 
-## Outstanding before release
-- Chromium browser-print and html2pdf attachment-export validation. Local Chromium fails process-singleton socket setup; escalation fails workspace mount; dedicated headless-shell download fails archive integrity. Native browser cannot open file URLs and cannot reach the local HTTP preview from its separate host.
-- Remote review-branch push was denied by access reviewer pending explicit owner approval for existing GitHub repository destination. No retry, no remote push or production deployment.
-- Preview-only sample HTML must stay separate from final production source changes.
+## Browser verification (31 October 2026)
+- Owner explicitly approved publishing review branch to existing repository. Connector created preview/quote-paperwork; Vercel staging deployment only, no production release.
+- Browser-rendered short and 54-row html2pdf exports downloaded and visually checked: 1 and 4 pages respectively. Correct totals/terms present; row boundaries do not clip text. Raster export does not repeat table headings across pages (existing html2pdf limitation); browser print stylesheet specifies repeating headings.
+- Fixed large blank-top/cropped-body attachment defect when the source preview was scrolled: quote exports now explicitly set html2canvas scrollX/scrollY to zero. Other document export options unchanged.
+- Fixed distorted logo in raster export using intrinsic image ratio rather than object-fit (unsupported by html2canvas).
+- 390px iframe viewport checked: body scrollWidth equals clientWidth, equipment/quantity and totals remain readable.
+- `node tests/quote-export.test.cjs` passes quote-only export options/nonquote preservation without invoking send helpers.
+
+## Remaining limit
+- Native Chromium print dialog does not open from Print/Save PDF or Ctrl+P in this cloud browser, so native Chromium print-to-PDF not verified. WeasyPrint print layout and real browser html2pdf exports were verified separately.
+- Production not published. QA sample HTML must be excluded from release; use source-only commit, not QA branch head.
 
 ## Reproduction
 `HTML_ONLY=1 node tests/quote-paperwork.cjs` builds isolated synthetic HTML, without loading auth, network or real business data.
