@@ -161,17 +161,21 @@ document.getElementById('quoteForm').onsubmit=e=>{e.preventDefault();if(e.target
     await loadHtml2Pdf();
     const label=LABELS[type]?.[0]||'Document';
     const filename=safeName(`CS-Energy-${quoteId}-${label}.pdf`);
+    const isProposal=type==='quote'&&!!host.querySelector('.solar-proposal');
+    if(isProposal)host.classList.add('proposal-export');
+    try{
     const worker=html2pdf().set({
       margin:[8,8,8,8],
       filename,
       image:{type:'jpeg',quality:0.98},
       html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',...(type==='quote'?{scrollX:0,scrollY:0}:{})},
       jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
-      pagebreak:{mode:['css','legacy']}
+      pagebreak:{mode:['css','legacy'],...(isProposal?{before:['.sp-system-section','.sp-investment'],avoid:['.sp-grid','.sp-stat','.sp-system','.sp-price','.sp-chart','.sp-monthly','tr']}:{})}
     }).from(host).toPdf();
     const pdf=await worker.get('pdf');
     const blob=pdf.output('blob');
     return {blob,filename};
+    }finally{if(isProposal)host.classList.remove('proposal-export');}
   }
 
 
